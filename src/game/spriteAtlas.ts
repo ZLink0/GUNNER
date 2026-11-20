@@ -26,6 +26,7 @@ export const HERO_ANIMS: Record<HeroAnimName, HeroAnimSpec> = {
   dash: { row: 15, frames: 3, fps: 14, loop: true },
   potion: { row: 16, frames: 4, fps: 10, loop: false },
   hangClimb: { row: 17, frames: 4, fps: 9, loop: true },
+  block: { row: 18, frames: 3, fps: 10, loop: true },
 };
 
 export interface LoadedSprites {
@@ -50,6 +51,7 @@ export interface ExtractedUiIcons {
   itemIcons: string[]; // 8 data URLs
   armorIcons: string[]; // 5 data URLs
   accessoryIcons: string[]; // 4 data URLs
+  grappleIcons: string[]; // 2 data URLs
 }
 
 function loadImg(src: string): Promise<HTMLImageElement> {
@@ -97,6 +99,7 @@ export function loadAllSprites(): Promise<{ sprites: LoadedSprites; icons: Extra
       itemIcons: Array.from({ length: 8 }, (_, i) => cropToPngDataUrl(itemsVfx, i * 16, 0, 16, 16)),
       armorIcons: Array.from({ length: 5 }, (_, i) => cropToPngDataUrl(gear, i * 16, 0, 16, 16)),
       accessoryIcons: Array.from({ length: 4 }, (_, i) => cropToPngDataUrl(gear, i * 16, 16, 16, 16)),
+      grappleIcons: Array.from({ length: 2 }, (_, i) => cropToPngDataUrl(gear, (4 + i) * 16, 16, 16, 16)),
     };
     return {
       sprites: {

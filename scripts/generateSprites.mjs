@@ -131,30 +131,33 @@ class PixelSurface {
   }
 }
 
-// ---- 1. HERO SPRITE SHEET (192 x 576 -> 6 cols x 18 rows of 32x32) ----
-// Row 17 = hangClimb (4 frames: hand-over-hand monkey bar / overhead bar hanging)
+// ---- 1. HERO SPRITE SHEET (192 x 608 -> 6 cols x 19 rows of 32x32) ----
+// Blue Doom-Slayer style armor, Right-hand Sword + Left-hand Gun aimed forward
+// Row 17 = hangClimb (4 frames), Row 18 = block (3 frames)
 const HERO_PAL = {
-  O: '#0f111a',
-  H1: '#1d4ed8',
-  H2: '#3b82f6',
-  H3: '#93c5fd',
-  S1: '#e0a97d',
-  S2: '#fcd5b5',
+  O: '#090d16',
+  H1: '#1e3a8a', // Deep Doom Blue Armor shadow
+  H2: '#2563eb', // Royal Blue Armor mid
+  H3: '#60a5fa', // Bright Cobalt Armor highlight
+  V1: '#0891b2', // Visor cyan shadow
+  V2: '#22d3ee', // Visor cyan glow
+  S1: '#334155', // Undersuit dark slate
+  S2: '#475569', // Undersuit mid
   E: '#0f172a',
   EW: '#ffffff',
-  B1: '#b91c1c',
-  B2: '#ef4444',
-  T1: '#0f766e',
-  T2: '#14b8a6',
-  T3: '#5eead4',
-  L1: '#451a03',
-  L2: '#92400e',
-  G1: '#eab308',
-  P1: '#475569',
-  P2: '#94a3b8',
-  P3: '#38bdf8',
-  W1: '#cbd5e1',
-  W2: '#ffffff',
+  B1: '#1d4ed8', // Shoulder/trim blue
+  B2: '#38bdf8', // Trim neon blue
+  T1: '#1e40af', // Chestplate dark blue
+  T2: '#2563eb', // Chestplate blue
+  T3: '#93c5fd', // Chestplate specular
+  L1: '#1e293b', // Greaves/gauntlet dark
+  L2: '#3b82f6', // Greaves/gauntlet blue
+  G1: '#facc15', // Gold belt/hilt accent
+  P1: '#334155', // Gun dark
+  P2: '#94a3b8', // Gun steel
+  P3: '#38bdf8', // Gun plasma core
+  W1: '#cbd5e1', // Sword steel
+  W2: '#ffffff', // Sword edge
   FX1: '#fef08a',
   FX2: '#38bdf8',
   POT1: '#22c55e',
@@ -175,6 +178,7 @@ function drawHeroFrame(surf, col, row, opts = {}) {
     swordFrame = -1,
     climbFrame = -1,
     hangFrame = -1,
+    blockFrame = -1,
     deadFrame = -1,
     hurtFlash = false,
   } = opts;
@@ -238,17 +242,17 @@ function drawHeroFrame(surf, col, row, opts = {}) {
     surf.rect(cx - 3 + swing, oy + 26, 3, 3, HERO_PAL.L2);
     surf.rect(cx + 1 + swing, oy + 25, 4, 4, HERO_PAL.O);
     surf.rect(cx + 1 + swing, oy + 25, 3, 3, HERO_PAL.L2);
-    // Torso
-    surf.rect(cx - 5, bodyTop - 1, 10, 9, HERO_PAL.O);
-    surf.rect(cx - 4, bodyTop, 8, 7, HERO_PAL.T2);
+    // Armored Doom-Slayer torso & helmet while hanging
+    surf.rect(cx - 6, bodyTop - 1, 12, 9, HERO_PAL.O);
+    surf.rect(cx - 5, bodyTop, 10, 7, HERO_PAL.T2);
+    surf.rect(cx - 4, bodyTop + 1, 8, 2, HERO_PAL.T3);
     surf.rect(cx - 4, bodyTop + 5, 8, 2, HERO_PAL.L1);
     surf.rect(cx - 1, bodyTop + 5, 2, 2, HERO_PAL.G1);
-    // Head & face
+    // Blue Doom Helmet
     surf.rect(cx - 5, headY, 10, 9, HERO_PAL.O);
     surf.rect(cx - 4, headY + 1, 8, 7, HERO_PAL.H2);
-    surf.rect(cx - 4, headY + 3, 8, 2, HERO_PAL.B2);
-    surf.rect(cx - 1, headY + 4, 5, 4, HERO_PAL.S2);
-    surf.rect(cx + 2, headY + 5, 2, 2, HERO_PAL.E);
+    surf.rect(cx - 3, headY + 1, 6, 2, HERO_PAL.H3);
+    surf.rect(cx - 2, headY + 3, 6, 3, HERO_PAL.V2);
     return;
   }
 
@@ -307,43 +311,67 @@ function drawHeroFrame(surf, col, row, opts = {}) {
     drawBoot(cx - 1 + rx, baseY - 4 + ry, 4, 4);
   }
 
-  const torsoH = 9 - squashY;
-  surf.rect(cx - 5, bodyTop - 1, 10, torsoH + 2, HERO_PAL.O);
-  surf.rect(cx - 4, bodyTop, 8, torsoH, hurtFlash ? HERO_PAL.W2 : HERO_PAL.T2);
-  surf.rect(cx - 4, bodyTop, 3, torsoH, hurtFlash ? HERO_PAL.FX1 : HERO_PAL.T1);
-  surf.rect(cx + 1, bodyTop + 1, 2, 3, HERO_PAL.T3);
-  surf.rect(cx - 4, bodyTop + torsoH - 3, 8, 2, HERO_PAL.L1);
+  const torsoH = 10 - squashY;
+  // Back/Right Arm holding Sword in ready guard position (behind/above right shoulder)
+  if (climbFrame < 0 && !armMode.startsWith('sword') && blockFrame < 0) {
+    // Armored right arm back gripping sword hilt
+    surf.rect(cx - 8, bodyTop + 1, 4, 4, HERO_PAL.O);
+    surf.rect(cx - 7, bodyTop + 2, 3, 2, HERO_PAL.L2);
+    // Sword held ready by right hand (angled up-back/side)
+    surf.line(cx - 7, bodyTop + 2, cx - 13, bodyTop - 7, HERO_PAL.O);
+    surf.line(cx - 7, bodyTop + 1, cx - 12, bodyTop - 7, HERO_PAL.W1);
+    surf.set(cx - 12, bodyTop - 7, HERO_PAL.W2);
+    surf.rect(cx - 8, bodyTop + 1, 2, 2, HERO_PAL.G1); // gold hilt
+  }
+
+  // Broad Doom-Slayer Blue Power Armor Torso + Shoulder Pauldrons
+  surf.rect(cx - 6, bodyTop - 1, 12, torsoH + 2, HERO_PAL.O);
+  surf.rect(cx - 5, bodyTop, 10, torsoH, hurtFlash ? HERO_PAL.W2 : HERO_PAL.T2);
+  surf.rect(cx - 5, bodyTop, 4, torsoH, hurtFlash ? HERO_PAL.FX1 : HERO_PAL.T1);
+  // Shoulder Pauldrons (Doom Slayer silhouette)
+  surf.rect(cx - 7, bodyTop - 1, 4, 4, HERO_PAL.O);
+  surf.rect(cx - 6, bodyTop, 3, 3, HERO_PAL.H3);
+  surf.rect(cx + 3, bodyTop - 1, 4, 4, HERO_PAL.O);
+  surf.rect(cx + 3, bodyTop, 3, 3, HERO_PAL.H3);
+  // Chest armor core + belt
+  surf.rect(cx - 1, bodyTop + 1, 4, 3, HERO_PAL.T3);
+  surf.rect(cx, bodyTop + 2, 2, 1, HERO_PAL.V2);
+  surf.rect(cx - 5, bodyTop + torsoH - 3, 10, 2, HERO_PAL.L1);
   surf.rect(cx - 1, bodyTop + torsoH - 3, 3, 2, HERO_PAL.G1);
 
+  // Doom-Slayer Blue Praetor Helmet (armored crest + angular cyan tactical visor)
   const headY = bodyTop - 10;
   surf.rect(cx - 6, headY - 1, 12, 10, HERO_PAL.O);
-  surf.rect(cx - 5, headY, 10, 8, HERO_PAL.H2);
-  surf.rect(cx - 6, headY + 1, 2, 3, HERO_PAL.H1);
-  surf.rect(cx - 3, headY - 2, 3, 2, HERO_PAL.H2);
-  surf.rect(cx + 1, headY - 2, 4, 2, HERO_PAL.H3);
-  surf.rect(cx + 4, headY + 1, 3, 2, HERO_PAL.H3);
-  surf.set(cx - 3, headY - 3, HERO_PAL.O);
-  surf.set(cx + 2, headY - 3, HERO_PAL.O);
-
-  if (climbFrame >= 0) {
-    surf.rect(cx - 5, headY + 3, 10, 2, HERO_PAL.B2);
-    surf.rect(cx - 1, headY + 5, 2, 3, HERO_PAL.B1);
-  } else {
-    surf.rect(cx - 1, headY + 3, 6, 6, HERO_PAL.S2);
-    surf.rect(cx - 1, headY + 3, 1, 6, HERO_PAL.S1);
-    surf.rect(cx - 5, headY + 2, 10, 2, HERO_PAL.B2);
-    surf.rect(cx - 5, headY + 2, 3, 2, HERO_PAL.B1);
-    surf.rect(cx + 2, headY + 4, 2, 3, HERO_PAL.E);
-    surf.set(cx + 2, headY + 4, HERO_PAL.EW);
-  }
+  surf.rect(cx - 5, headY, 10, 8, hurtFlash ? HERO_PAL.W2 : HERO_PAL.H2);
+  surf.rect(cx - 5, headY, 3, 8, HERO_PAL.H1);
+  surf.rect(cx - 3, headY - 2, 6, 2, HERO_PAL.O);
+  surf.rect(cx - 2, headY - 1, 5, 2, HERO_PAL.H3); // helmet fin/ridge
+  // Armored chin/jaw guard
+  surf.rect(cx - 4, headY + 5, 9, 3, HERO_PAL.H1);
+  surf.rect(cx + 2, headY + 6, 3, 2, HERO_PAL.P2);
+  // Glowing tactical visor looking forward
+  surf.rect(cx - 1, headY + 2, 7, 3, HERO_PAL.O);
+  surf.rect(cx, headY + 3, 5, 2, HERO_PAL.V2);
+  surf.set(cx + 3, headY + 3, HERO_PAL.W2);
 
   if (climbFrame >= 0) {
     const la = climbFrame % 2 === 0 ? -5 : 0;
     const ra = climbFrame % 2 === 0 ? 0 : -5;
     surf.rect(cx - 7, bodyTop + la, 3, 6, HERO_PAL.L2);
     surf.rect(cx + 4, bodyTop + ra, 3, 6, HERO_PAL.L2);
-    surf.rect(cx - 7, bodyTop + la, 3, 2, HERO_PAL.S2);
-    surf.rect(cx + 4, bodyTop + ra, 3, 2, HERO_PAL.S2);
+    surf.rect(cx - 7, bodyTop + la, 3, 2, HERO_PAL.H3);
+    surf.rect(cx + 4, bodyTop + ra, 3, 2, HERO_PAL.H3);
+    return;
+  }
+
+  // Block Pose (Row 18: armored left/right guard shield + sword held tight)
+  if (blockFrame >= 0) {
+    surf.rect(cx + 4, bodyTop - 3, 5, 13, HERO_PAL.O);
+    surf.rect(cx + 5, bodyTop - 2, 3, 11, HERO_PAL.H3);
+    surf.rect(cx + 6, bodyTop, 2, 7, HERO_PAL.V2);
+    if (blockFrame % 2 === 1) {
+      surf.line(cx + 9, bodyTop - 2, cx + 9, bodyTop + 9, HERO_PAL.W2);
+    }
     return;
   }
 
@@ -381,6 +409,8 @@ function drawHeroFrame(surf, col, row, opts = {}) {
 
   if (armMode.startsWith('sword')) {
     const dir = armMode === 'swordWind' ? -1 : 1;
+    // Left arm keeps gun braced at waist while Right arm slashes sword forward
+    surf.rect(cx - 4, bodyTop + 3, 5, 3, HERO_PAL.P1);
     surf.rect(cx + 3, bodyTop + 2, 4, 3, HERO_PAL.L2);
     if (swordFrame === 0) {
       surf.line(cx - 2, bodyTop + 1, cx - 7, bodyTop - 6, HERO_PAL.O);
@@ -398,20 +428,22 @@ function drawHeroFrame(surf, col, row, opts = {}) {
     return;
   }
 
-  const gunExt = armMode === 'shoot' ? 8 : 6;
+  // Front/Left Arm aiming Gun forward in ready-to-shoot stance ("tangan kiri bawa gun ke depan pose mau tembak")
+  const gunExt = armMode === 'shoot' ? 9 : 7;
   const gunY = bodyTop + 2;
-  surf.rect(cx + 2, gunY - 1, gunExt + 1, 5, HERO_PAL.O);
-  surf.rect(cx + 3, gunY, gunExt - 1, 3, HERO_PAL.P2);
-  surf.rect(cx + 3, gunY + 2, gunExt - 1, 1, HERO_PAL.P1);
-  surf.set(cx + 4, gunY + 1, HERO_PAL.P3);
+  surf.rect(cx + 1, gunY, 3, 3, HERO_PAL.L2); // armored forearm reaching forward
+  surf.rect(cx + 3, gunY - 1, gunExt + 1, 5, HERO_PAL.O);
+  surf.rect(cx + 4, gunY, gunExt - 1, 3, HERO_PAL.P2);
+  surf.rect(cx + 4, gunY + 2, gunExt - 1, 1, HERO_PAL.P1);
+  surf.set(cx + 5, gunY + 1, HERO_PAL.P3);
   if (muzzle) {
-    surf.circle(cx + 3 + gunExt + 1, gunY + 1, 2, HERO_PAL.FX1);
-    surf.set(cx + 3 + gunExt + 2, gunY + 1, HERO_PAL.W2);
+    surf.circle(cx + 4 + gunExt + 1, gunY + 1, 2, HERO_PAL.FX1);
+    surf.set(cx + 4 + gunExt + 2, gunY + 1, HERO_PAL.W2);
   }
 }
 
 function buildHeroSheet() {
-  const surf = new PixelSurface(192, 576);
+  const surf = new PixelSurface(192, 608);
   for (let i = 0; i < 4; i++) drawHeroFrame(surf, i, 0, { bobY: i === 2 ? 1 : 0, scarfWave: i });
   for (let i = 0; i < 4; i++) drawHeroFrame(surf, i, 1, { legMode: `walk${i}`, bobY: i % 2 === 1 ? -1 : 0, scarfWave: i });
   for (let i = 0; i < 6; i++) drawHeroFrame(surf, i, 2, { legMode: `run${i}`, leanX: 1, bobY: i % 3 === 1 ? -1 : 0, scarfWave: i * 1.4 });
@@ -452,6 +484,8 @@ function buildHeroSheet() {
   for (let i = 0; i < 4; i++) drawHeroFrame(surf, i, 16, { armMode: `potion${i}`, bobY: i === 2 ? -1 : 0 });
   // Row 17: hangClimb (4 frames hand-over-hand)
   for (let i = 0; i < 4; i++) drawHeroFrame(surf, i, 17, { hangFrame: i });
+  // Row 18: block (3 frames guard shield)
+  for (let i = 0; i < 3; i++) drawHeroFrame(surf, i, 18, { blockFrame: i });
 
   surf.save('hero.png');
 }
@@ -910,11 +944,11 @@ function buildMenuIconsSheet() {
   surf.save('menu_icons.png');
 }
 
-// ---- 7. GEAR ICONS (80 x 32 -> row 0: 5 Armors 16x16, row 1: 4 Accessories 16x16) ----
+// ---- 7. GEAR ICONS (96 x 32 -> row 0: 5 Armors 16x16, row 1: 4 Accessories + 2 Grapple Hooks 16x16) ----
 function buildGearIconsSheet() {
-  const surf = new PixelSurface(80, 32);
+  const surf = new PixelSurface(96, 32);
   const armorColors = [
-    { c1: '#0f766e', c2: '#14b8a6', hi: '#5eead4', trim: '#eab308' }, // Adventurer Vest
+    { c1: '#1e3a8a', c2: '#2563eb', hi: '#60a5fa', trim: '#22d3ee' }, // Doom Blue Vest
     { c1: '#475569', c2: '#94a3b8', hi: '#e2e8f0', trim: '#cbd5e1' }, // Iron Mail
     { c1: '#0284c7', c2: '#38bdf8', hi: '#e0f2fe', trim: '#67e8f9' }, // Crystal Plate
     { c1: '#7f1d1d', c2: '#dc2626', hi: '#fca5a5', trim: '#facc15' }, // Dragon Scale
@@ -932,7 +966,7 @@ function buildGearIconsSheet() {
     surf.rect(ox + 6, 2, 4, 2, '#0f111a'); // collar notch
   });
 
-  // Row 1: 4 Accessories (Ammo Belt, Crit Ring, Power Gauntlet, Wind Boots)
+  // Row 1: 4 Accessories (Ammo Belt, Crit Ring, Power Gauntlet, Wind Boots) + 2 Grapple Hooks (cols 4..5)
   // 0: Ammo Belt
   surf.rect(2, 16 + 5, 12, 6, '#0f111a');
   surf.rect(3, 16 + 6, 10, 4, '#92400e');
@@ -957,6 +991,24 @@ function buildGearIconsSheet() {
   surf.rect(48 + 5, 16 + 10, 7, 2, '#5eead4');
   surf.line(48 + 9, 16 + 5, 48 + 13, 16 + 3, '#ffffff');
   surf.line(48 + 9, 16 + 7, 48 + 12, 16 + 6, '#bae6fd');
+
+  // 4: Iron Grapple Hook (col 4, y=16)
+  surf.line(64 + 3, 16 + 13, 64 + 11, 16 + 5, '#0f111a');
+  surf.line(64 + 3, 16 + 12, 64 + 11, 16 + 4, '#94a3b8');
+  surf.rect(64 + 8, 16 + 2, 6, 6, '#0f111a');
+  surf.line(64 + 8, 16 + 3, 64 + 13, 16 + 3, '#cbd5e1');
+  surf.line(64 + 12, 16 + 3, 64 + 12, 16 + 8, '#cbd5e1');
+  surf.set(64 + 12, 16 + 3, '#38bdf8');
+  surf.rect(64 + 2, 16 + 11, 3, 3, '#334155');
+
+  // 5: Plasma Grapple Hook (col 5, y=16)
+  surf.line(80 + 3, 16 + 13, 80 + 11, 16 + 5, '#0f111a');
+  surf.line(80 + 3, 16 + 12, 80 + 11, 16 + 4, '#38bdf8');
+  surf.rect(80 + 8, 16 + 2, 6, 6, '#0f111a');
+  surf.line(80 + 8, 16 + 3, 80 + 13, 16 + 3, '#facc15');
+  surf.line(80 + 12, 16 + 3, 80 + 12, 16 + 8, '#facc15');
+  surf.set(80 + 12, 16 + 3, '#ffffff');
+  surf.rect(80 + 2, 16 + 11, 3, 3, '#1d4ed8');
 
   surf.save('gear.png');
 }

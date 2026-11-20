@@ -65,13 +65,27 @@ export interface MovingPlatformSpawn {
   phase: number;
 }
 
+export type PortalUnlockRule = 'kills' | 'key' | 'lever' | 'boss';
+
 export interface AreaPortal {
   id: number;
   x: number;
   y: number;
-  kind: 'warp' | 'exit';
-  targetPortalId?: number;
+  kind: 'exit';
+  rule: PortalUnlockRule;
   requiredKills: number;
+}
+
+export interface LeverSpawn {
+  id: number;
+  x: number;
+  y: number;
+}
+
+export interface KeySpawn {
+  id: number;
+  x: number;
+  y: number;
 }
 
 export interface StageArea {
@@ -79,6 +93,7 @@ export interface StageArea {
   biomeIndex: number; // 0..5
   biomeId: BiomeId;
   isBossArea: boolean;
+  portalRule: PortalUnlockRule;
   cols: number;
   rows: number;
   tiles: TileType[][]; // [row][col]
@@ -87,6 +102,8 @@ export interface StageArea {
   portalX: number;
   portalY: number;
   portals: AreaPortal[];
+  lever?: LeverSpawn;
+  keySpawn?: KeySpawn;
   movingPlatforms: MovingPlatformSpawn[];
   enemies: EnemySpawn[];
   chests: ChestSpawn[];
@@ -119,6 +136,12 @@ export function getWorldIndexForStage(stageNumber: number): number {
 export function getBiomeForStage(stageNumber: number): BiomeDef {
   const clamped = Math.max(1, Math.min(100, stageNumber));
   return BIOMES[(clamped - 1) % BIOMES.length];
+}
+
+export function getAreaPortalRule(stageNumber: number, areaIndex: number, isBossArea: boolean): PortalUnlockRule {
+  if (isBossArea) return 'boss';
+  const rules: readonly ('kills' | 'key' | 'lever')[] = ['kills', 'key', 'lever'];
+  return rules[(stageNumber + areaIndex) % rules.length];
 }
 
 function mapBehaviorToKind(behavior: KerocoBehavior): EnemyKind {
@@ -314,10 +337,13 @@ function generateArea(
     tiles[groundRow - 2][c] = 0;
   }
 
-  // Build Portals: multiple portals per area (2 Branch Warp Portals + 1 Exit Portal)
+  // Build Portals: Exit Portal only + distinct per-area rule ('kills' | 'key' | 'lever' | 'boss')
+  const portalRule = getAreaPortalRule(stage, areaIndex, isBossArea);
   const portals: AreaPortal[] = [];
   let exitCol = cols - 4;
   let exitRow = groundRow;
+  let lever: LeverSpawn | undefined;
+  let keySpawn: KeySpawn | undefined;
 
   if (isBossArea) {
     exitCol = cols - 5;
@@ -327,6 +353,7 @@ function generateArea(
       x: exitCol * TILE_SIZE + 8,
       y: exitRow * TILE_SIZE,
       kind: 'exit',
+      rule: 'boss',
       requiredKills: 0, // Boss defeat unlocks final exit
     });
   } else {
@@ -340,41 +367,58 @@ function generateArea(
       exitRow = groundRow;
     }
 
-    // Two paired Branch Warp Portals so players can traverse branching paths
-    const warpACol = Math.floor(cols * 0.28);
-    const warpBCol = Math.floor(cols * 0.66);
-    setSolidFloor(warpACol, groundRow);
-    setSolidFloor(warpACol + 1, groundRow);
-    for (let wc = warpBCol - 1; wc <= warpBCol + 2; wc++) tiles[5][wc] = 3;
-    tiles[6][warpBCol] = 4;
-    tiles[7][warpBCol] = 4;
-    tiles[8][warpBCol] = 4;
+    portals.push({
+      id: 0,
+      x: exitCol * TILE_SIZE + 8,
+      y: exitRow * TILE_SIZE,
+      kind: 'exit',
+      rule: portalRule,
+      requiredKills: portalRule === 'kills' ? KILLS_TO_OPEN_EXIT : 0,
+    });
 
-    portals.push(
-      {
-        id: 0,
-        x: warpACol * TILE_SIZE + 8,
-        y: groundRow * TILE_SIZE,
-        kind: 'warp',
-        targetPortalId: 1,
-        requiredKills: 0,
-      },
-      {
-        id: 1,
-        x: warpBCol * TILE_SIZE + 8,
-        y: 5 * TILE_SIZE,
-        kind: 'warp',
-        targetPortalId: 0,
-        requiredKills: 0,
-      },
-      {
-        id: 2,
-        x: exitCol * TILE_SIZE + 8,
-        y: exitRow * TILE_SIZE,
-        kind: 'exit',
-        requiredKills: KILLS_TO_OPEN_EXIT,
-      },
-    );
+    if (portalRule === 'lever') {
+      // Place high overhead Lever ("tuas") at row 2 (y = 40px) out of normal jump reach,
+      // clear upper platforms/ladders right under it so it MUST be triggered via Grappling Hook [R]!
+      const leverCol = Math.max(18, Math.min(cols - 16, Math.floor(cols * (0.45 + (areaIndex % 3) * 0.12))));
+      for (let cClear = leverCol - 1; cClear <= leverCol + 1; cClear++) {
+        for (let rClear = 1; rClear <= 6; rClear++) {
+          if (tiles[rClear][cClear] === 3 || tiles[rClear][cClear] === 4 || tiles[rClear][cClear] === 7) {
+            tiles[rClear][cClear] = 0;
+          }
+        }
+        if (tiles[groundRow][cClear] === 8) {
+          setSolidFloor(cClear, groundRow);
+        }
+      }
+      // Small ceiling anchor block above lever at row 0..1
+      tiles[0][leverCol] = 2;
+      tiles[1][leverCol] = 2;
+      lever = {
+        id: areaIndex + 1,
+        x: leverCol * TILE_SIZE + 8,
+        y: 2 * TILE_SIZE + 8,
+      };
+    } else if (portalRule === 'key') {
+      // Place collectible Portal Key on an accessible mid-area platform or ground floor
+      const keyCol = Math.max(16, Math.min(cols - 15, Math.floor(cols * (0.36 + (areaIndex % 3) * 0.14))));
+      let keyRow = groundRow;
+      for (let r = 4; r < STAGE_ROWS - 1; r++) {
+        if (tiles[r][keyCol] === 1 || tiles[r][keyCol] === 3) {
+          keyRow = r;
+          break;
+        }
+      }
+      if (tiles[keyRow][keyCol] === 8 || tiles[keyRow - 1][keyCol] === 5) {
+        setSolidFloor(keyCol, groundRow);
+        tiles[groundRow - 1][keyCol] = 0;
+        keyRow = groundRow;
+      }
+      keySpawn = {
+        id: areaIndex + 1,
+        x: keyCol * TILE_SIZE + 8,
+        y: keyRow * TILE_SIZE - 8,
+      };
+    }
   }
 
   // Populate enemies: >= 7 varied keroco from the 40-enemy catalog
@@ -476,6 +520,7 @@ function generateArea(
     biomeIndex: biome.index,
     biomeId: biome.id,
     isBossArea,
+    portalRule,
     cols,
     rows: STAGE_ROWS,
     tiles,
@@ -484,6 +529,8 @@ function generateArea(
     portalX: exitCol * TILE_SIZE + 8,
     portalY: exitRow * TILE_SIZE,
     portals,
+    lever,
+    keySpawn,
     movingPlatforms,
     enemies,
     chests,

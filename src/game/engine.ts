@@ -3,12 +3,17 @@ import { BossDef, KerocoBehavior } from './enemyCatalog';
 import {
   addExpAndLevelUp,
   addHpPotion,
-  calculateAttackDamage,
+  computeBlockedDamage,
+  computeChargedGunDamage,
+  computeChargedGunRange,
   computeHeroStats,
   consumeAmmo,
+  getGrappleDef,
   getGunDef,
   getSwordDef,
   refillAmmo,
+  resolveCombatHit,
+  rollChargedSlashStun,
   rollEnemyDropKind,
   shouldEnemyDropItem,
 } from './rpgLogic';
@@ -18,6 +23,7 @@ import {
   HUD_BAR_HEIGHT,
   KILLS_TO_OPEN_EXIT,
   PORTALS_PER_STAGE,
+  PortalUnlockRule,
   StageArea,
   StageData,
   TILE_SIZE,
@@ -44,8 +50,9 @@ export type VirtualButton =
   | 'gun'
   | 'dash'
   | 'potion'
-  | 'turnLeft'
-  | 'turnRight';
+  | 'turnFlip'
+  | 'block'
+  | 'grapple';
 
 export interface HudSnapshot {
   hp: number;
@@ -61,6 +68,13 @@ export interface HudSnapshot {
   totalPortals: number;
   areaKills: number;
   requiredKills: number;
+  leverActivated: boolean;
+  hasLever: boolean;
+  portalRule: PortalUnlockRule;
+  carryingKey: boolean;
+  hasKey: boolean;
+  heroStunned: boolean;
+  dodgeActive: boolean;
   biomeName: string;
   score: number;
   bossHpPct: number | null;
@@ -126,6 +140,8 @@ interface Projectile {
   vy: number;
   damage: number;
   isCrit: boolean;
+  isCharged: boolean;
+  stunChance: number;
   spriteCol: number;
   life: number;
   distTraveled: number;
@@ -197,6 +213,7 @@ interface SlashHitbox {
   dirY: number;
   isHeavy: boolean;
   isDashSlash: boolean;
+  isChargedSkill: boolean;
   comboStep: 1 | 2 | 3;
   hitIds: Set<number>;
 }
@@ -269,6 +286,43 @@ export class GameEngine {
   private isDead = false;
   private stageCleared = false;
   private clearDelayTimer = 0;
+  private isBlocking = false;
+  private leverActivated = false;
+  private heroStunTimer = 0;
+  private dodgeWindowTimer = 0;
+  private isDodgeDash = false;
+  private swordChargeTimer = 0;
+  private wasSwordHeld = false;
+  private gunChargeTimer = 0;
+  private wasGunHeld = false;
+  private pointerAimAngle: number | null = null;
+  private grapplePreviewAngle: number | null = null;
+  private pendingGrappleAngle: number | null = null;
+
+  private keyObj = {
+    active: false,
+    x: 0,
+    y: 0,
+    vx: 0,
+    vy: 0,
+    carried: false,
+    pickupCooldown: 0,
+  };
+
+  private grapple = {
+    active: false,
+    phase: 'extending' as 'extending' | 'pulling' | 'pullingEnemy' | 'retracting',
+    x: 0,
+    y: 0,
+    vx: 0,
+    vy: 0,
+    dist: 0,
+    maxDist: 120,
+    pullSpeed: 320,
+    pullTimer: 0,
+    cooldown: 0,
+    latchedEnemyId: null as number | null,
+  };
 
   private hp = 80;
   private maxHp = 80;
@@ -308,6 +362,7 @@ export class GameEngine {
     dirY: 0,
     isHeavy: false,
     isDashSlash: false,
+    isChargedSkill: false,
     comboStep: 1,
     hitIds: new Set<number>(),
   };
@@ -331,6 +386,8 @@ export class GameEngine {
     vy: 0,
     damage: 1,
     isCrit: false,
+    isCharged: false,
+    stunChance: 0,
     spriteCol: 0,
     life: 0,
     distTraveled: 0,
@@ -443,6 +500,13 @@ export class GameEngine {
     this.slash.active = false;
     this.squashX = 1;
     this.squashY = 1;
+    this.heroStunTimer = 0;
+    this.dodgeWindowTimer = 0;
+    this.isDodgeDash = false;
+    this.swordChargeTimer = 0;
+    this.wasSwordHeld = false;
+    this.gunChargeTimer = 0;
+    this.wasGunHeld = false;
 
     this.runTime = 0;
     this.runScore = 0;
@@ -458,11 +522,70 @@ export class GameEngine {
     this.loadArea(0);
   }
 
+  public setPointerAim(normX: number | null, normY: number | null) {
+    if (normX === null || normY === null || this.mode !== 'stage') {
+      this.pointerAimAngle = null;
+      return;
+    }
+    const cx = normX * CANVAS_SIZE;
+    const cy = normY * CANVAS_SIZE;
+    const heroScreenX = this.hx - Math.floor(this.camX);
+    const heroScreenY = this.hy - 14 + HUD_BAR_HEIGHT;
+    const dx = cx - heroScreenX;
+    const dy = cy - heroScreenY;
+    if (Math.hypot(dx, dy) < 4) return;
+    this.pointerAimAngle = Math.atan2(dy, dx);
+  }
+
+  public setGrappleAimPreview(angleRad: number | null) {
+    this.grapplePreviewAngle = angleRad;
+  }
+
+  public fireGrappleWithAngle(angleRad: number | null) {
+    if (this.mode !== 'stage' || this.paused) return;
+    this.pendingGrappleAngle = angleRad;
+    this.justPressed.add('grapple');
+  }
+
   private loadArea(index: number) {
     this.areaIndex = index;
     this.area = this.stage.areas[index];
     this.areaKills = 0;
+    this.leverActivated = false;
+    this.isBlocking = false;
+    this.heroStunTimer = 0;
+    this.dodgeWindowTimer = 0;
+    this.isDodgeDash = false;
+    this.swordChargeTimer = 0;
+    this.wasSwordHeld = false;
+    this.gunChargeTimer = 0;
+    this.wasGunHeld = false;
+    this.grapple.active = false;
+    this.grapple.latchedEnemyId = null;
+    this.grapple.cooldown = 0;
     this.portalCooldown = 0.8;
+
+    if (this.area.keySpawn) {
+      this.keyObj = {
+        active: true,
+        x: this.area.keySpawn.x,
+        y: this.area.keySpawn.y,
+        vx: 0,
+        vy: 0,
+        carried: false,
+        pickupCooldown: 0,
+      };
+    } else {
+      this.keyObj = {
+        active: false,
+        x: 0,
+        y: 0,
+        vx: 0,
+        vy: 0,
+        carried: false,
+        pickupCooldown: 0,
+      };
+    }
 
     this.hx = this.area.spawnX;
     this.hy = this.area.spawnY;
@@ -530,10 +653,18 @@ export class GameEngine {
     for (const v of this.vfxList) v.active = false;
     for (const f of this.floatingTexts) f.active = false;
 
+    const ruleHint =
+      this.area.portalRule === 'key'
+        ? 'KEY PORTAL'
+        : this.area.portalRule === 'lever'
+          ? 'TUAS PORTAL'
+          : this.area.portalRule === 'boss'
+            ? 'BOSS ARENA'
+            : 'KILL 5';
     this.spawnFloatingText(
       this.hx + 18,
       this.hy - 32,
-      `${this.stage.biome.name.toUpperCase()} P${index + 1}/5`,
+      `${this.stage.biome.name.toUpperCase()} P${index + 1}/5 · ${ruleHint}`,
       '#38bdf8',
     );
     this.emitHud();
@@ -585,9 +716,13 @@ export class GameEngine {
       case 'KeyH':
         return 'potion';
       case 'KeyQ':
-        return 'turnLeft';
+        return 'turnFlip';
+      case 'KeyF':
+      case 'KeyV':
+        return 'block';
+      case 'KeyR':
       case 'KeyE':
-        return 'turnRight';
+        return 'grapple';
       default:
         return null;
     }
@@ -671,6 +806,18 @@ export class GameEngine {
     return this.getTile(col, row) === 4;
   }
 
+  private isLadderTop(col: number, row: number): boolean {
+    return this.getTile(col, row) === 4 && this.getTile(col, row - 1) !== 4;
+  }
+
+  private findTopLadderRow(col: number, startRow: number): number {
+    let r = startRow;
+    while (r > 0 && this.getTile(col, r - 1) === 4) {
+      r--;
+    }
+    return r;
+  }
+
   private getMonkeyBarRowAt(x: number, y: number): number | null {
     const col = Math.floor(x / TILE_SIZE);
     const row = Math.floor(y / TILE_SIZE);
@@ -723,6 +870,7 @@ export class GameEngine {
     this.portalCooldown = Math.max(0, this.portalCooldown - scaledDt);
     this.updateMovingPlatforms(scaledDt);
     this.updateHero(scaledDt);
+    this.updateKey(scaledDt);
     this.updateSlash(scaledDt);
     this.updateProjectiles(scaledDt);
     this.updateEnemies(scaledDt);
@@ -778,6 +926,8 @@ export class GameEngine {
     const stats = computeHeroStats(this.save);
     this.invulnTimer = Math.max(0, this.invulnTimer - dt);
     this.hurtTimer = Math.max(0, this.hurtTimer - dt);
+    this.heroStunTimer = Math.max(0, this.heroStunTimer - dt);
+    this.dodgeWindowTimer = Math.max(0, this.dodgeWindowTimer - dt);
     this.dashCooldown = Math.max(0, this.dashCooldown - dt);
     this.shootCooldown = Math.max(0, this.shootCooldown - dt);
     this.shootPoseTimer = Math.max(0, this.shootPoseTimer - dt);
@@ -795,8 +945,19 @@ export class GameEngine {
       this.comboStep = 1;
     }
 
+    const isStunned = this.heroStunTimer > 0;
+    if (isStunned) {
+      this.swordBuffer = 0;
+      this.gunBuffer = 0;
+      this.dashBuffer = 0;
+      this.jumpBuffer = 0;
+      this.swordChargeTimer = 0;
+      this.gunChargeTimer = 0;
+      this.isBlocking = false;
+    }
+
     // Potion use
-    if (this.justPressed.has('potion')) {
+    if (this.justPressed.has('potion') && !isStunned) {
       if (this.save.hpPotions > 0 && this.hp < this.maxHp) {
         const heal = Math.round(this.maxHp * 0.45);
         this.hp = Math.min(this.maxHp, this.hp + heal);
@@ -817,14 +978,215 @@ export class GameEngine {
     const moveUp = this.held.has('up');
     const moveDown = this.held.has('down');
     const dirInput = (moveRight ? 1 : 0) - (moveLeft ? 1 : 0);
+    const prevFacing = this.hFacing;
 
-    // Explicit Turn Left / Turn Right buttons ("putar kanan kiri")
-    if (this.justPressed.has('turnLeft') || this.held.has('turnLeft')) {
-      this.hFacing = -1;
-    } else if (this.justPressed.has('turnRight') || this.held.has('turnRight')) {
-      this.hFacing = 1;
-    } else if (dirInput !== 0 && this.dashTimer <= 0 && this.hurtTimer <= 0) {
+    // Backstep Dodge check BEFORE facing flips: Dash + opposite direction of current facing!
+    const wantsBackstepDodge =
+      !isStunned &&
+      this.dashBuffer > 0 &&
+      this.dashCooldown <= 0 &&
+      this.hurtTimer <= 0 &&
+      !this.isBlocking &&
+      dirInput !== 0 &&
+      dirInput === -prevFacing;
+
+    // Single Turn/Flip button toggles left <-> right ("hanya 1 saja fungsi balik badan kiri kanan")
+    if (this.justPressed.has('turnFlip') && !isStunned) {
+      this.hFacing = this.hFacing === 1 ? -1 : 1;
+      this.spawnParticles(this.hx, this.hy - 12, '#cbd5e1', 3, 25);
+    } else if (
+      !wantsBackstepDodge &&
+      !isStunned &&
+      dirInput !== 0 &&
+      this.dashTimer <= 0 &&
+      this.hurtTimer <= 0 &&
+      !this.grapple.active
+    ) {
       this.hFacing = dirInput as -1 | 1;
+    }
+
+    // L Button: Guard / Block stance (reduces damage, still takes >= 1 damage)
+    this.isBlocking =
+      !isStunned &&
+      this.held.has('block') &&
+      this.hurtTimer <= 0 &&
+      this.dashTimer <= 0 &&
+      !this.slash.active &&
+      !this.onLadder &&
+      !this.onMonkeyBar &&
+      !(this.grapple.active && this.grapple.phase === 'pulling');
+
+    // R Button: 360-degree Grappling Hook launch & update (pulls enemies toward hero, or hero toward boss/wall/lever)
+    this.grapple.cooldown = Math.max(0, this.grapple.cooldown - dt);
+    if (
+      this.justPressed.has('grapple') &&
+      !this.grapple.active &&
+      this.grapple.cooldown <= 0 &&
+      this.hurtTimer <= 0 &&
+      !isStunned
+    ) {
+      const gDef = getGrappleDef(this.save.equippedGrapple ?? 'iron_grapple');
+      const gUpg = this.save.grappleUpgrades?.[gDef.id] ?? 0;
+
+      const dpadY = (moveDown ? 1 : 0) - (moveUp ? 1 : 0);
+      let angleRad: number;
+      if (this.pendingGrappleAngle !== null) {
+        angleRad = this.pendingGrappleAngle;
+        this.pendingGrappleAngle = null;
+      } else if (dirInput !== 0 || dpadY !== 0) {
+        angleRad = Math.atan2(dpadY, dirInput);
+      } else if (this.pointerAimAngle !== null) {
+        angleRad = this.pointerAimAngle;
+      } else {
+        angleRad = Math.atan2(-0.73, this.hFacing * 0.68);
+      }
+
+      const aimX = Math.cos(angleRad);
+      const aimY = Math.sin(angleRad);
+      if (Math.abs(aimX) > 0.25) {
+        this.hFacing = aimX >= 0 ? 1 : -1;
+      }
+
+      this.grapple.active = true;
+      this.grapple.phase = 'extending';
+      this.grapple.latchedEnemyId = null;
+      this.grapple.x = this.hx + aimX * 6;
+      this.grapple.y = this.hy - 14 + aimY * 6;
+      this.grapple.vx = aimX * 440;
+      this.grapple.vy = aimY * 440;
+      this.grapple.dist = 0;
+      this.grapple.maxDist = gDef.rangePx + gUpg * 8;
+      this.grapple.pullSpeed = gDef.pullSpeed + gUpg * 10;
+      this.grapple.pullTimer = 0;
+      this.grapple.cooldown = 0.26;
+      gameAudio.playDash();
+    }
+
+    if (this.grapple.active) {
+      if (this.grapple.phase === 'extending') {
+        const stepX = this.grapple.vx * dt;
+        const stepY = this.grapple.vy * dt;
+        this.grapple.x += stepX;
+        this.grapple.y += stepY;
+        this.grapple.dist += Math.hypot(stepX, stepY);
+
+        // 1. Check overhead Lever ("tuas")
+        const lever = this.area.lever;
+        if (lever && Math.hypot(this.grapple.x - lever.x, this.grapple.y - lever.y) <= 16) {
+          if (!this.leverActivated) {
+            this.leverActivated = true;
+            this.spawnFloatingText(lever.x, lever.y - 14, 'TUAS AKTIF! EXIT OPEN!', '#4ade80');
+            gameAudio.playPickup(true);
+            this.emitHud();
+          } else {
+            this.spawnFloatingText(lever.x, lever.y - 14, 'TUAS SUDAH AKTIF', '#38bdf8');
+          }
+          this.spawnParticles(lever.x, lever.y, '#4ade80', 14, 85);
+          this.grapple.phase = 'retracting';
+        } else {
+          // 2. Check Enemy / Boss latch: regular enemies are pulled to hero; bosses pull hero toward boss!
+          let hitEnemy: ActiveEnemy | undefined;
+          for (const e of this.enemies) {
+            if (e.dead) continue;
+            if (
+              this.grapple.x >= e.x - e.w * 0.65 &&
+              this.grapple.x <= e.x + e.w * 0.65 &&
+              this.grapple.y >= e.y - e.h - 4 &&
+              this.grapple.y <= e.y + 4
+            ) {
+              hitEnemy = e;
+              break;
+            }
+          }
+
+          if (hitEnemy) {
+            this.grapple.latchedEnemyId = hitEnemy.id;
+            this.grapple.pullTimer = 0;
+            this.spawnParticles(hitEnemy.x, hitEnemy.y - hitEnemy.h * 0.5, '#facc15', 8, 60);
+            if (hitEnemy.kind === 'boss') {
+              // Boss cannot be pulled -> pulls hero toward boss!
+              this.grapple.phase = 'pulling';
+              this.grapple.x = hitEnemy.x;
+              this.grapple.y = hitEnemy.y - hitEnemy.h * 0.5;
+              this.onLadder = false;
+              this.onMonkeyBar = false;
+              this.dashTimer = 0;
+              this.spawnFloatingText(this.hx, this.hy - 28, 'HOOK BOSS!', '#facc15');
+            } else {
+              // Normal enemy -> pulls enemy toward hero!
+              this.grapple.phase = 'pullingEnemy';
+              hitEnemy.stunTimer = Math.max(hitEnemy.stunTimer, 0.45);
+              this.spawnFloatingText(hitEnemy.x, hitEnemy.y - hitEnemy.h - 6, 'PULL!', '#38bdf8');
+            }
+          } else {
+            // 3. Check solid/platform/monkey-bar anchor
+            const gCol = Math.floor(this.grapple.x / TILE_SIZE);
+            const gRow = Math.floor(this.grapple.y / TILE_SIZE);
+            const gTile = this.getTile(gCol, gRow);
+            if (this.isSolid(gCol, gRow) || this.isOneWay(gCol, gRow) || gTile === 7) {
+              this.grapple.phase = 'pulling';
+              this.grapple.pullTimer = 0;
+              this.onLadder = false;
+              this.onMonkeyBar = false;
+              this.dashTimer = 0;
+              this.spawnParticles(this.grapple.x, this.grapple.y, '#38bdf8', 6, 45);
+            } else if (
+              this.grapple.dist >= this.grapple.maxDist ||
+              this.grapple.y <= HUD_BAR_HEIGHT ||
+              this.grapple.x <= 4 ||
+              this.grapple.x >= this.area.cols * TILE_SIZE - 4
+            ) {
+              this.grapple.phase = 'retracting';
+            }
+          }
+        }
+      } else if (this.grapple.phase === 'pullingEnemy') {
+        this.grapple.pullTimer += dt;
+        const latched = this.enemies.find((e) => e.id === this.grapple.latchedEnemyId && !e.dead);
+        if (!latched || this.grapple.pullTimer > 0.55) {
+          this.grapple.phase = 'retracting';
+          this.grapple.latchedEnemyId = null;
+        } else {
+          const targetX = this.hx + this.hFacing * 16;
+          const targetY = this.hy;
+          const dx = targetX - latched.x;
+          const dy = targetY - latched.y;
+          const dist = Math.hypot(dx, dy);
+          if (dist < 16) {
+            this.grapple.active = false;
+            this.grapple.latchedEnemyId = null;
+          } else {
+            const pullStep = this.grapple.pullSpeed * 0.9 * dt;
+            const nextX = latched.x + (dx / dist) * pullStep;
+            const nextY = latched.y + (dy / dist) * pullStep;
+            const eColX = Math.floor(nextX / TILE_SIZE);
+            const eRowMid = Math.floor((latched.y - latched.h * 0.5) / TILE_SIZE);
+            if (!this.isSolid(eColX, eRowMid)) {
+              latched.x = Math.max(16, Math.min(this.area.cols * TILE_SIZE - 16, nextX));
+            }
+            const eRowFoot = Math.floor((nextY - 1) / TILE_SIZE);
+            const eRowHead = Math.floor((nextY - latched.h) / TILE_SIZE);
+            if (!this.isSolid(Math.floor(latched.x / TILE_SIZE), eRowFoot) && !this.isSolid(Math.floor(latched.x / TILE_SIZE), eRowHead)) {
+              latched.y = Math.max(32, Math.min((this.area.rows - 1) * TILE_SIZE, nextY));
+            }
+            latched.vx = 0;
+            latched.vy = 0;
+            this.grapple.x = latched.x;
+            this.grapple.y = latched.y - latched.h * 0.5;
+          }
+        }
+      } else if (this.grapple.phase === 'retracting') {
+        const dx = this.hx - this.grapple.x;
+        const dy = this.hy - 14 - this.grapple.y;
+        const d = Math.hypot(dx, dy);
+        if (d < 16) {
+          this.grapple.active = false;
+          this.grapple.latchedEnemyId = null;
+        } else {
+          this.grapple.x += (dx / d) * 480 * dt;
+          this.grapple.y += (dy / d) * 480 * dt;
+        }
+      }
     }
 
     // Water obstacle detection
@@ -843,7 +1205,7 @@ export class GameEngine {
         this.waterDamageTick += dt;
         if (this.waterDamageTick >= 1.0) {
           this.waterDamageTick = 0;
-          this.damageHero(8, 0);
+          this.damageHero(8, 0, { isHazard: true });
         }
       }
     } else {
@@ -851,20 +1213,45 @@ export class GameEngine {
       this.waterDamageTick = 0;
     }
 
-    // Ladder detection (Up / Down)
+    // Ladder detection (Up / Down) + Standable Ladder Top ("menginjak tangga di ujung")
     const nearLadder = this.isLadderAt(this.hx, this.hy - 4) || this.isLadderAt(this.hx, this.hy - 12);
-    if (nearLadder && (moveUp || moveDown) && this.dashTimer <= 0 && this.hurtTimer <= 0) {
-      this.onLadder = true;
-      this.onMonkeyBar = false;
-      this.hvy = 0;
-      this.hvx = 0;
+    const standingOnLadderTop = this.onGround && this.isLadderTop(centerCol, Math.floor((this.hy + 2) / TILE_SIZE));
+    if (
+      !this.onLadder &&
+      !isStunned &&
+      this.dashTimer <= 0 &&
+      this.hurtTimer <= 0 &&
+      !(this.grapple.active && this.grapple.phase === 'pulling')
+    ) {
+      if (nearLadder && moveUp) {
+        this.onLadder = true;
+        this.onMonkeyBar = false;
+        this.hvy = 0;
+        this.hvx = 0;
+      } else if (moveDown && (nearLadder || standingOnLadderTop)) {
+        this.onLadder = true;
+        this.onMonkeyBar = false;
+        if (standingOnLadderTop) {
+          this.hy += 6;
+        }
+        this.hvy = 0;
+        this.hvx = 0;
+      }
     }
     if (this.onLadder && !nearLadder) {
       this.onLadder = false;
     }
 
     // Horizontal Overhead Monkey Bar detection ("bergelantung" left/right)
-    if (!this.onLadder && !this.onMonkeyBar && this.monkeyBarCooldown <= 0 && this.hurtTimer <= 0 && this.dashTimer <= 0) {
+    if (
+      !this.onLadder &&
+      !this.onMonkeyBar &&
+      !isStunned &&
+      this.monkeyBarCooldown <= 0 &&
+      this.hurtTimer <= 0 &&
+      this.dashTimer <= 0 &&
+      !(this.grapple.active && this.grapple.phase === 'pulling')
+    ) {
       const barRow =
         this.getMonkeyBarRowAt(this.hx, this.hy - 22) ??
         (moveUp ? this.getMonkeyBarRowAt(this.hx, this.hy - 26) : null);
@@ -877,29 +1264,74 @@ export class GameEngine {
       }
     }
 
-    // Dash
-    if (this.dashBuffer > 0 && this.dashCooldown <= 0 && this.hurtTimer <= 0) {
+    // Dash & Backstep Dodge (Dash + Arah Belakang = Dodge Miss window!)
+    if (!isStunned && this.dashBuffer > 0 && this.dashCooldown <= 0 && this.hurtTimer <= 0 && !this.isBlocking) {
       this.dashBuffer = 0;
-      this.dashTimer = 0.19;
+      this.dashTimer = 0.2;
       this.dashCooldown = 0.42;
       this.onLadder = false;
       this.onMonkeyBar = false;
+      this.grapple.active = false;
+      this.grapple.latchedEnemyId = null;
       this.hvy = 0;
-      this.hvx = this.hFacing * 205 * stats.speedMult;
+      if (wantsBackstepDodge) {
+        this.isDodgeDash = true;
+        this.dodgeWindowTimer = 0.38;
+        this.hFacing = prevFacing;
+        this.hvx = -prevFacing * 218 * stats.speedMult;
+        this.spawnFloatingText(this.hx, this.hy - 24, 'DODGE!', '#38bdf8');
+        this.spawnParticles(this.hx + prevFacing * 6, this.hy - 10, '#bae6fd', 8, 65);
+      } else {
+        this.isDodgeDash = false;
+        this.hvx = this.hFacing * 205 * stats.speedMult;
+        this.spawnParticles(this.hx - this.hFacing * 6, this.hy - 8, '#38bdf8', 7, 70);
+      }
       this.squashX = 1.24;
       this.squashY = 0.78;
       gameAudio.playDash();
-      this.spawnParticles(this.hx - this.hFacing * 6, this.hy - 8, '#38bdf8', 7, 70);
     }
 
     // Movement physics
-    if (this.hurtTimer > 0) {
+    let snappedToLadderTop = false;
+    if (isStunned) {
       this.onMonkeyBar = false;
+      this.grapple.active = false;
+      this.grapple.latchedEnemyId = null;
+      this.hvx *= Math.max(0, 1 - dt * 10);
+      this.hvy = Math.min(310, this.hvy + 520 * dt);
+    } else if (this.hurtTimer > 0) {
+      this.onMonkeyBar = false;
+      this.grapple.active = false;
+      this.grapple.latchedEnemyId = null;
       this.hvy += 520 * dt;
+    } else if (this.grapple.active && this.grapple.phase === 'pulling') {
+      this.grapple.pullTimer += dt;
+      if (this.grapple.latchedEnemyId !== null) {
+        const latchedBoss = this.enemies.find((e) => e.id === this.grapple.latchedEnemyId && !e.dead);
+        if (latchedBoss) {
+          this.grapple.x = latchedBoss.x;
+          this.grapple.y = latchedBoss.y - latchedBoss.h * 0.5;
+        }
+      }
+      const dx = this.grapple.x - this.hx;
+      const dy = this.grapple.y - (this.hy - 12);
+      const dist = Math.hypot(dx, dy);
+      if (dist < 16 || this.grapple.pullTimer > 0.55 || this.jumpBuffer > 0) {
+        this.grapple.active = false;
+        this.grapple.latchedEnemyId = null;
+        this.hvy = this.jumpBuffer > 0 ? -200 : -95;
+        this.jumpBuffer = 0;
+      } else {
+        this.hvx = (dx / dist) * this.grapple.pullSpeed;
+        this.hvy = (dy / dist) * this.grapple.pullSpeed;
+      }
     } else if (this.dashTimer > 0) {
       this.dashTimer -= dt;
-      this.hvx = this.hFacing * 205 * stats.speedMult;
+      const dashDir = this.isDodgeDash ? -this.hFacing : this.hFacing;
+      const dashSpd = this.isDodgeDash ? 218 : 205;
+      this.hvx = dashDir * dashSpd * stats.speedMult;
       this.hvy = 0;
+      if (this.dashTimer <= 0) this.isDodgeDash = false;
     } else if (this.onMonkeyBar) {
       // Hanging hand-over-hand along horizontal bar
       const hangSpeed = 76 * stats.speedMult;
@@ -923,7 +1355,16 @@ export class GameEngine {
       const climbSpeed = 68;
       this.hvy = moveUp ? -climbSpeed : moveDown ? climbSpeed : 0;
       this.hvx = dirInput * 40;
-      if (this.jumpBuffer > 0) {
+      const curRow = Math.floor((this.hy - 4) / TILE_SIZE);
+      const topLadderRow = this.findTopLadderRow(centerCol, curRow);
+      if (moveUp && this.hy + this.hvy * dt <= topLadderRow * TILE_SIZE + 2) {
+        // Reached top rung -> stand cleanly on top of the ladder instead of falling!
+        this.hy = topLadderRow * TILE_SIZE;
+        this.hvy = 0;
+        this.onLadder = false;
+        this.onGround = true;
+        snappedToLadderTop = true;
+      } else if (this.jumpBuffer > 0) {
         this.jumpBuffer = 0;
         this.onLadder = false;
         this.hvy = -215;
@@ -931,7 +1372,8 @@ export class GameEngine {
       }
     } else {
       const waterSlow = this.inWater ? 0.62 : 1;
-      const maxSpeed = 104 * stats.speedMult * waterSlow;
+      const blockSlow = this.isBlocking ? 0.42 : 1;
+      const maxSpeed = 104 * stats.speedMult * waterSlow * blockSlow;
       const targetVx = dirInput * maxSpeed;
       const accel = this.onGround ? 920 : this.inWater ? 420 : 620;
       if (this.hvx < targetVx) this.hvx = Math.min(targetVx, this.hvx + accel * dt);
@@ -994,18 +1436,18 @@ export class GameEngine {
       }
     }
 
-    // Vertical move & collision (Tiles + Moving Platforms)
+    // Vertical move & collision (Tiles + Moving Platforms + Ladder Tops)
     const prevY = this.hy;
     const wasOnGround = this.onGround;
-    if (!this.onMonkeyBar) {
+    if (!this.onMonkeyBar && !snappedToLadderTop) {
       this.hy += this.hvy * dt;
     }
-    this.onGround = false;
+    this.onGround = snappedToLadderTop;
 
     const leftCol = Math.floor((this.hx - halfW + 1) / TILE_SIZE);
     const rightCol = Math.floor((this.hx + halfW - 1) / TILE_SIZE);
 
-    if (this.hvy >= 0 && !this.onLadder && !this.onMonkeyBar) {
+    if (this.hvy >= 0 && !this.onLadder && !this.onMonkeyBar && !snappedToLadderTop) {
       // Check Moving Platforms first
       let landedOnMoving = false;
       if (!moveDown) {
@@ -1035,7 +1477,8 @@ export class GameEngine {
         for (let c = leftCol; c <= rightCol; c++) {
           const hitSolid = this.isSolid(c, footRow);
           const hitOneWay = this.isOneWay(c, footRow) && prevFootRow < footRow && !moveDown;
-          if (hitSolid || hitOneWay) {
+          const hitLadderTop = this.isLadderTop(c, footRow) && prevFootRow < footRow && !moveDown;
+          if (hitSolid || hitOneWay || hitLadderTop) {
             this.hy = footRow * TILE_SIZE;
             this.hvy = 0;
             this.onGround = true;
@@ -1063,7 +1506,7 @@ export class GameEngine {
 
     // Pit fall recovery / damage
     if (this.hy > this.area.rows * TILE_SIZE + 18) {
-      this.damageHero(18, -this.hFacing);
+      this.damageHero(18, -this.hFacing, { isHazard: true });
       if (!this.isDead) {
         this.hx = Math.max(24, this.hx - 24);
         this.hy = (this.area.rows - 4) * TILE_SIZE;
@@ -1074,23 +1517,45 @@ export class GameEngine {
     // Spike hazard check
     const bodyRow = Math.floor((this.hy - 6) / TILE_SIZE);
     if (this.getTile(centerCol, bodyRow) === 5 && this.invulnTimer <= 0) {
-      this.damageHero(12, -this.hFacing);
+      this.damageHero(12, -this.hFacing, { isHazard: true });
     }
 
-    // Sword attack
-    if (this.swordBuffer > 0 && this.swordCooldown <= 0 && this.hurtTimer <= 0) {
+    // Sword Hold & Charge Skill (Hold A >= 0.55s & release -> Skill Slash w/ 30% Stun!)
+    const swordHeldNow = this.held.has('sword');
+    if (swordHeldNow && !isStunned && this.hurtTimer <= 0) {
+      this.swordChargeTimer += dt;
+      if (this.swordChargeTimer >= 0.25 && Math.random() < dt * 16) {
+        const ready = this.swordChargeTimer >= 0.55;
+        this.spawnParticles(
+          this.hx + (Math.random() - 0.5) * 14,
+          this.hy - 12 + (Math.random() - 0.5) * 14,
+          ready ? '#fde047' : '#38bdf8',
+          1,
+          28,
+        );
+      }
+    }
+    const releasedChargedSword =
+      !swordHeldNow && this.wasSwordHeld && this.swordChargeTimer >= 0.55 && !isStunned && this.hurtTimer <= 0;
+    if (!swordHeldNow) {
+      this.swordChargeTimer = 0;
+    }
+    this.wasSwordHeld = swordHeldNow;
+
+    if ((releasedChargedSword || (this.swordBuffer > 0 && this.swordCooldown <= 0)) && this.hurtTimer <= 0 && !isStunned) {
       this.swordBuffer = 0;
-      const isDashSlash = this.dashTimer > 0;
-      const step = isDashSlash ? 3 : this.comboStep;
-      const isHeavy = step === 3 || isDashSlash;
+      const isChargedSkill = releasedChargedSword;
+      const isDashSlash = this.dashTimer > 0 && !isChargedSkill;
+      const step = isChargedSkill || isDashSlash ? 3 : this.comboStep;
+      const isHeavy = step === 3 || isDashSlash || isChargedSkill;
       const speedMult = stats.swordDef.speedMult;
 
       let dirX: number = this.hFacing;
       let dirY = 0;
-      if (moveUp) {
+      if (moveUp && !isChargedSkill) {
         dirX = 0;
         dirY = -1;
-      } else if (moveDown && !this.onGround) {
+      } else if (moveDown && !this.onGround && !isChargedSkill) {
         dirX = 0;
         dirY = 1;
       }
@@ -1098,11 +1563,12 @@ export class GameEngine {
       this.slash = {
         active: true,
         timer: 0,
-        duration: (isHeavy ? 0.24 : 0.17) / speedMult,
+        duration: (isChargedSkill ? 0.28 : isHeavy ? 0.24 : 0.17) / speedMult,
         dirX,
         dirY,
         isHeavy,
         isDashSlash,
+        isChargedSkill,
         comboStep: step,
         hitIds: new Set<number>(),
       };
@@ -1112,28 +1578,58 @@ export class GameEngine {
       this.comboStep = step === 1 ? 2 : step === 2 ? 3 : 1;
       this.onLadder = false;
       gameAudio.playSword(step, isHeavy);
+      if (isChargedSkill) {
+        this.spawnFloatingText(this.hx, this.hy - 28, 'SKILL SLASH!', '#fde047');
+        this.spawnParticles(this.hx + this.hFacing * 12, this.hy - 12, '#fde047', 12, 95);
+      }
 
-      if (stats.swordDef.id === 'excalibur') {
-        this.spawnProjectile({
-          fromHero: true,
-          useGunSheet: false,
-          x: this.hx + this.hFacing * 10,
-          y: this.hy - 12,
-          vx: this.hFacing * 210,
-          vy: 0,
-          damage: Math.round(stats.atk * 0.75),
-          isCrit: false,
-          spriteCol: 5,
-          maxRange: null,
-          pierce: true,
-          element: 'holy',
-        });
+      if (stats.swordDef.id === 'excalibur' || isChargedSkill) {
+        if (stats.swordDef.id === 'excalibur') {
+          this.spawnProjectile({
+            fromHero: true,
+            useGunSheet: false,
+            x: this.hx + this.hFacing * 10,
+            y: this.hy - 12,
+            vx: this.hFacing * 210,
+            vy: 0,
+            damage: Math.round(stats.atk * 0.75),
+            isCrit: false,
+            isCharged: isChargedSkill,
+            stunChance: isChargedSkill ? 0.30 : 0.08,
+            spriteCol: 5,
+            maxRange: null,
+            pierce: true,
+            element: 'holy',
+          });
+        }
       }
     }
 
-    // Gun shoot
-    if (this.gunBuffer > 0 && this.shootCooldown <= 0 && this.hurtTimer <= 0) {
+    // Gun Hold & Charge Skill (Hold X >= 0.55s & release -> Charged Shot +DMG & +4 blocks range!)
+    const gunHeldNow = this.held.has('gun');
+    if (gunHeldNow && !isStunned && this.hurtTimer <= 0) {
+      this.gunChargeTimer += dt;
+      if (this.gunChargeTimer >= 0.25 && Math.random() < dt * 16) {
+        const ready = this.gunChargeTimer >= 0.55;
+        this.spawnParticles(
+          this.hx + this.hFacing * 8 + (Math.random() - 0.5) * 10,
+          this.hy - 12 + (Math.random() - 0.5) * 10,
+          ready ? '#22d3ee' : '#60a5fa',
+          1,
+          26,
+        );
+      }
+    }
+    const releasedChargedGun =
+      !gunHeldNow && this.wasGunHeld && this.gunChargeTimer >= 0.55 && !isStunned && this.hurtTimer <= 0;
+    if (!gunHeldNow) {
+      this.gunChargeTimer = 0;
+    }
+    this.wasGunHeld = gunHeldNow;
+
+    if ((releasedChargedGun || (this.gunBuffer > 0 && this.shootCooldown <= 0)) && this.hurtTimer <= 0 && !isStunned) {
       this.gunBuffer = 0;
+      const isChargedShot = releasedChargedGun;
       const ammoCheck = consumeAmmo(this.save.ammo, 1);
       if (!ammoCheck.ok) {
         this.shootCooldown = 0.22;
@@ -1164,13 +1660,20 @@ export class GameEngine {
 
         const pellets = gun.pellets;
         const spreadRad = (gun.spreadAngleDeg * Math.PI) / 180;
+        const rawShotDamage = isChargedShot ? computeChargedGunDamage(stats.gunAtk) : stats.gunAtk;
+        const shotMaxRange = isChargedShot ? computeChargedGunRange(gun.rangePx) : gun.rangePx;
+
         for (let pIdx = 0; pIdx < pellets; pIdx++) {
           const offset = pellets === 1 ? 0 : (pIdx - (pellets - 1) / 2) * spreadRad;
           const ang = baseAngle + offset;
-          const dmgRes = calculateAttackDamage({
-            rawAtk: stats.gunAtk,
-            critRate: stats.critRate,
-            rngValue: Math.random(),
+          const hitRes = resolveCombatHit({
+            rawAtk: rawShotDamage,
+            critRate: isChargedShot ? Math.min(0.85, stats.critRate + 0.15) : stats.critRate,
+            missChance: isChargedShot ? 0 : 0.06,
+            stunChance: isChargedShot ? 0.20 : 0.05,
+            rngHit: 0.99, // Miss rolled on projectile impact for accurate enemy MISS! feedback
+            rngCrit: Math.random(),
+            rngStun: Math.random(),
           });
 
           this.spawnProjectile({
@@ -1178,18 +1681,25 @@ export class GameEngine {
             useGunSheet: true,
             x: sx,
             y: sy,
-            vx: Math.cos(ang) * gun.projectileSpeed,
-            vy: Math.sin(ang) * gun.projectileSpeed,
-            damage: dmgRes.damage,
-            isCrit: dmgRes.isCrit,
+            vx: Math.cos(ang) * gun.projectileSpeed * (isChargedShot ? 1.15 : 1),
+            vy: Math.sin(ang) * gun.projectileSpeed * (isChargedShot ? 1.15 : 1),
+            damage: hitRes.damage,
+            isCrit: hitRes.isCrit,
+            isCharged: isChargedShot,
+            stunChance: isChargedShot ? 0.22 : 0.05,
             spriteCol: gun.spriteIndex,
-            maxRange: gun.rangePx,
-            pierce: gun.pierce,
+            maxRange: shotMaxRange,
+            pierce: gun.pierce || isChargedShot,
             element: gun.element,
           });
         }
 
-        this.shootCooldown = gun.cooldownSec;
+        if (isChargedShot) {
+          this.spawnFloatingText(this.hx, this.hy - 28, 'CHARGED SHOT!', '#22d3ee');
+          this.spawnParticles(sx, sy, '#22d3ee', 10, 80);
+        }
+
+        this.shootCooldown = isChargedShot ? Math.max(0.14, gun.cooldownSec * 0.7) : gun.cooldownSec;
         this.shootPoseTimer = 0.18;
         this.shootAimDir = aim;
         this.squashX = 0.92;
@@ -1198,16 +1708,17 @@ export class GameEngine {
       }
     }
 
-    // Resolve hero animation state across 18 animations (including hangClimb)
+    // Resolve hero animation state across 19 animations (including hangClimb & block)
     let nextAnim: HeroAnimName = 'idle';
     if (this.isDead) nextAnim = 'death';
-    else if (this.hurtTimer > 0) nextAnim = 'hurt';
+    else if (this.hurtTimer > 0 || isStunned) nextAnim = 'hurt';
     else if (this.potionAnimTimer > 0) nextAnim = 'potion';
     else if (this.slash.active) {
       nextAnim = this.slash.comboStep === 1 ? 'sword1' : this.slash.comboStep === 2 ? 'sword2' : 'sword3';
     } else if (this.shootPoseTimer > 0) {
       nextAnim = this.shootAimDir === 'up' ? 'shootUp' : this.shootAimDir === 'down' ? 'shootDown' : 'shoot';
-    } else if (this.dashTimer > 0) nextAnim = 'dash';
+    } else if (this.isBlocking) nextAnim = 'block';
+    else if (this.dashTimer > 0) nextAnim = 'dash';
     else if (this.onMonkeyBar) nextAnim = 'hangClimb';
     else if (this.onLadder) nextAnim = 'climb';
     else if (!this.onGround) nextAnim = this.hvy < 0 ? 'jump' : 'fall';
@@ -1231,6 +1742,52 @@ export class GameEngine {
     }
   }
 
+  private updateKey(dt: number) {
+    if (!this.keyObj.active) return;
+    this.keyObj.pickupCooldown = Math.max(0, this.keyObj.pickupCooldown - dt);
+
+    if (this.keyObj.carried) {
+      // Floats smoothly behind hero while hero remains 100% free to move/jump/climb/fight
+      const bob = Math.sin(this.portalAnim * 1.1) * 2.5;
+      const targetX = this.hx - this.hFacing * 14;
+      const targetY = this.hy - 18 + bob;
+      this.keyObj.x += (targetX - this.keyObj.x) * Math.min(1, dt * 12);
+      this.keyObj.y += (targetY - this.keyObj.y) * Math.min(1, dt * 12);
+      return;
+    }
+
+    // Grounded / dropped physics
+    this.keyObj.vy += 420 * dt;
+    this.keyObj.x = Math.max(20, Math.min(this.area.cols * TILE_SIZE - 20, this.keyObj.x + this.keyObj.vx * dt));
+    this.keyObj.y += this.keyObj.vy * dt;
+
+    const kCol = Math.floor(this.keyObj.x / TILE_SIZE);
+    const kRow = Math.floor((this.keyObj.y + 6) / TILE_SIZE);
+    if (this.isSolid(kCol, kRow) || this.isOneWay(kCol, kRow)) {
+      this.keyObj.y = kRow * TILE_SIZE - 6;
+      this.keyObj.vy = Math.abs(this.keyObj.vy) > 45 ? -Math.abs(this.keyObj.vy) * 0.38 : 0;
+      this.keyObj.vx *= 0.65;
+    }
+
+    if (this.keyObj.y > this.area.rows * TILE_SIZE - 8) {
+      this.keyObj.y = (this.area.rows - 4) * TILE_SIZE;
+      this.keyObj.vy = 0;
+      this.keyObj.vx = 0;
+    }
+
+    if (
+      this.keyObj.pickupCooldown <= 0 &&
+      !this.isDead &&
+      Math.hypot(this.hx - this.keyObj.x, this.hy - 12 - this.keyObj.y) < 18
+    ) {
+      this.keyObj.carried = true;
+      gameAudio.playPickup(true);
+      this.spawnFloatingText(this.hx, this.hy - 30, 'KEY GOT! PORTAL OPEN!', '#fde047');
+      this.spawnParticles(this.keyObj.x, this.keyObj.y, '#fde047', 10, 70);
+      this.emitHud();
+    }
+  }
+
   private updateSlash(dt: number) {
     if (!this.slash.active) return;
     this.slash.timer += dt;
@@ -1240,11 +1797,11 @@ export class GameEngine {
     }
 
     const stats = computeHeroStats(this.save);
-    const reach = 22 + stats.swordDef.rangeBonus + (this.slash.isHeavy ? 6 : 0);
+    const reach = 22 + stats.swordDef.rangeBonus + (this.slash.isHeavy ? 6 : 0) + (this.slash.isChargedSkill ? 8 : 0);
     const boxX = this.hx + this.slash.dirX * (reach * 0.55);
     const boxY = this.hy - 12 + this.slash.dirY * (reach * 0.55);
-    const boxW = (this.slash.dirX !== 0 ? reach : 22) + (this.slash.isDashSlash ? 6 : 0);
-    const boxH = this.slash.dirY !== 0 ? reach : 22;
+    const boxW = (this.slash.dirX !== 0 ? reach : 22) + (this.slash.isDashSlash ? 6 : 0) + (this.slash.isChargedSkill ? 8 : 0);
+    const boxH = this.slash.dirY !== 0 ? reach : 22 + (this.slash.isChargedSkill ? 6 : 0);
 
     for (const enemy of this.enemies) {
       if (enemy.dead || this.slash.hitIds.has(enemy.id)) continue;
@@ -1269,16 +1826,44 @@ export class GameEngine {
           continue;
         }
 
-        const dmgRes = calculateAttackDamage({
+        const mult = this.slash.isChargedSkill
+          ? 1.75
+          : this.slash.isHeavy
+            ? 1.45
+            : this.slash.comboStep === 2
+              ? 1.15
+              : 1.0;
+
+        const combatRes = resolveCombatHit({
           rawAtk: stats.atk,
-          critRate: stats.critRate,
-          rngValue: Math.random(),
-          multiplier: this.slash.isHeavy ? 1.45 : this.slash.comboStep === 2 ? 1.15 : 1.0,
+          critRate: this.slash.isChargedSkill ? Math.min(0.85, stats.critRate + 0.12) : stats.critRate,
+          missChance: this.slash.isChargedSkill ? 0 : 0.06,
+          stunChance: this.slash.isChargedSkill ? 0 : 0.08,
+          rngHit: Math.random(),
+          rngCrit: Math.random(),
+          rngStun: Math.random(),
+          multiplier: mult,
           isBossTarget: enemy.kind === 'boss',
           swordId: stats.swordDef.id,
         });
 
-        this.applyDamageToEnemy(enemy, dmgRes.damage, dmgRes.isCrit, this.hFacing, stats.swordDef.element);
+        if (combatRes.missed) {
+          this.spawnFloatingText(enemy.x, enemy.y - enemy.h - 4, 'MISS!', '#94a3b8');
+          continue;
+        }
+
+        const chargedStun = this.slash.isChargedSkill && rollChargedSlashStun(Math.random());
+        const stunned = chargedStun || combatRes.stunned;
+
+        this.applyDamageToEnemy(
+          enemy,
+          combatRes.damage,
+          combatRes.isCrit,
+          this.hFacing,
+          stats.swordDef.element,
+          stunned,
+          chargedStun ? 1.6 : 0.75,
+        );
 
         if (this.slash.dirY > 0 && !this.onGround) {
           this.hvy = -190;
@@ -1293,6 +1878,8 @@ export class GameEngine {
     isCrit: boolean,
     knockDir: number,
     element: string,
+    stunned = false,
+    stunDuration = 0.75,
   ) {
     enemy.hp -= damage;
     enemy.hitFlash = 0.08;
@@ -1302,7 +1889,10 @@ export class GameEngine {
 
     if (element === 'ice') enemy.slowTimer = 2.5;
     if (element === 'fire') enemy.burnTimer = 3.0;
-    if (element === 'thunder') enemy.stunTimer = 0.65;
+    if (element === 'thunder') enemy.stunTimer = Math.max(enemy.stunTimer, 0.65);
+    if (stunned) {
+      enemy.stunTimer = Math.max(enemy.stunTimer, stunDuration);
+    }
 
     this.hitstopTimer = isCrit || enemy.hp <= 0 ? 0.055 : 0.03;
     this.shakeTrauma = Math.min(1, this.shakeTrauma + (isCrit ? 0.42 : 0.22));
@@ -1313,8 +1903,8 @@ export class GameEngine {
     this.spawnFloatingText(
       enemy.x,
       enemy.y - enemy.h - 4,
-      isCrit ? `CRIT ${damage}!` : `${damage}`,
-      isCrit ? '#facc15' : '#ffffff',
+      stunned ? `${isCrit ? 'CRIT ' : ''}${damage} STUN!` : isCrit ? `CRIT ${damage}!` : `${damage}`,
+      stunned ? '#fde047' : isCrit ? '#facc15' : '#ffffff',
     );
 
     if (enemy.hp <= 0) {
@@ -1358,7 +1948,7 @@ export class GameEngine {
       }
       this.callbacks.onSaveUpdate(this.save);
 
-      if (!this.area.isBossArea && this.areaKills === KILLS_TO_OPEN_EXIT) {
+      if (this.area.portalRule === 'kills' && this.areaKills === KILLS_TO_OPEN_EXIT) {
         this.spawnFloatingText(this.hx, this.hy - 34, 'EXIT PORTAL OPEN!', '#4ade80');
         gameAudio.playPickup(true);
       }
@@ -1523,6 +2113,8 @@ export class GameEngine {
               vy: Math.sin(ang) * 135,
               damage: e.atk,
               isCrit: false,
+              isCharged: false,
+              stunChance: 0.08,
               spriteCol: 3,
               maxRange: 260,
               pierce: false,
@@ -1574,6 +2166,8 @@ export class GameEngine {
               vy: Math.sin(ang) * 145,
               damage: e.atk,
               isCrit: false,
+              isCharged: false,
+              stunChance: 0.08,
               spriteCol: 3,
               maxRange: 280,
               pierce: false,
@@ -1603,6 +2197,8 @@ export class GameEngine {
                   vy: vyOff,
                   damage: e.atk,
                   isCrit: false,
+                  isCharged: false,
+                  stunChance: 0.18,
                   spriteCol: 4,
                   maxRange: 340,
                   pierce: false,
@@ -1624,6 +2220,8 @@ export class GameEngine {
                   vy: vyOff,
                   damage: e.atk,
                   isCrit: false,
+                  isCharged: false,
+                  stunChance: 0.14,
                   spriteCol: 4,
                   maxRange: 300,
                   pierce: false,
@@ -1646,17 +2244,63 @@ export class GameEngine {
         e.vy += 480 * dt;
       }
 
-      // Enemy movement & ground clamp
-      e.x = Math.max(16, Math.min(this.area.cols * TILE_SIZE - 16, e.x + e.vx * dt));
+      // Enemy horizontal & vertical tile collision (prevents tunneling through water basin walls)
+      const eHalfW = Math.max(5, Math.min(12, e.w * 0.42));
+      const eCol = Math.floor(e.x / TILE_SIZE);
+      const eWaistRow = Math.floor((e.y - 6) / TILE_SIZE);
+      const inWaterTile = this.getTile(eCol, eWaistRow) === 8;
+      const waterDrag = inWaterTile ? 0.65 : 1;
+
+      e.x = Math.max(16, Math.min(this.area.cols * TILE_SIZE - 16, e.x + e.vx * waterDrag * dt));
       if (b !== 'bat' && b !== 'ghost' && b !== 'turret') {
-        e.y += e.vy * dt;
-        const col = Math.floor(e.x / TILE_SIZE);
-        const row = Math.floor(e.y / TILE_SIZE);
-        if (this.isSolid(col, row)) {
-          e.y = row * TILE_SIZE;
-          e.vy = 0;
-          if (b === 'slime') e.vx *= 0.7;
+        const eTopRow = Math.max(0, Math.floor((e.y - e.h + 2) / TILE_SIZE));
+        const eBotRow = Math.min(this.area.rows - 1, Math.floor((e.y - 2) / TILE_SIZE));
+        if (e.vx > 0) {
+          const rCol = Math.floor((e.x + eHalfW) / TILE_SIZE);
+          for (let r = eTopRow; r <= eBotRow; r++) {
+            if (this.isSolid(rCol, r)) {
+              e.x = rCol * TILE_SIZE - eHalfW - 0.05;
+              e.vx = 0;
+              e.facing = -1;
+              break;
+            }
+          }
+        } else if (e.vx < 0) {
+          const lCol = Math.floor((e.x - eHalfW) / TILE_SIZE);
+          for (let r = eTopRow; r <= eBotRow; r++) {
+            if (this.isSolid(lCol, r)) {
+              e.x = (lCol + 1) * TILE_SIZE + eHalfW + 0.05;
+              e.vx = 0;
+              e.facing = 1;
+              break;
+            }
+          }
         }
+
+        e.y += (inWaterTile ? e.vy * 0.72 : e.vy) * dt;
+        const leftC = Math.floor((e.x - eHalfW + 1) / TILE_SIZE);
+        const rightC = Math.floor((e.x + eHalfW - 1) / TILE_SIZE);
+        if (e.vy >= 0) {
+          const footRow = Math.floor((e.y - 0.01) / TILE_SIZE);
+          for (let c = leftC; c <= rightC; c++) {
+            if (this.isSolid(c, footRow)) {
+              e.y = footRow * TILE_SIZE;
+              e.vy = 0;
+              if (b === 'slime') e.vx *= 0.7;
+              break;
+            }
+          }
+        } else {
+          const headRow = Math.floor((e.y - e.h) / TILE_SIZE);
+          for (let c = leftC; c <= rightC; c++) {
+            if (this.isSolid(c, headRow)) {
+              e.y = (headRow + 1) * TILE_SIZE + e.h;
+              e.vy = 0;
+              break;
+            }
+          }
+        }
+
         if (e.y > this.area.rows * TILE_SIZE) {
           e.y = (this.area.rows - 2) * TILE_SIZE;
           e.vy = 0;
@@ -1672,32 +2316,102 @@ export class GameEngine {
         this.hy > e.y - e.h + 2 &&
         this.hy - 20 < e.y - 2
       ) {
-        this.damageHero(e.atk, this.hx < e.x ? -1 : 1);
+        this.damageHero(e.atk, this.hx < e.x ? -1 : 1, {
+          isBoss: e.kind === 'boss',
+          stunChance: e.kind === 'boss' ? 0.22 : 0.1,
+        });
       }
     }
   }
 
-  private damageHero(rawDmg: number, knockDir: number) {
+  private damageHero(
+    rawDmg: number,
+    knockDir: number,
+    options?: { isHazard?: boolean; isBoss?: boolean; stunChance?: number },
+  ) {
     if (this.invulnTimer > 0 || this.isDead || this.stageCleared) return;
+
+    // Backstep Dodge (Dash + Back) guarantees a clean Dodge Miss!
+    if (!options?.isHazard && this.dodgeWindowTimer > 0) {
+      this.invulnTimer = 0.25;
+      gameAudio.playDash();
+      this.spawnFloatingText(this.hx, this.hy - 28, 'DODGE! MISS!', '#38bdf8');
+      this.spawnParticles(this.hx, this.hy - 12, '#bae6fd', 8, 65);
+      return;
+    }
+
     const stats = computeHeroStats(this.save);
-    const dmg = Math.max(2, Math.round(rawDmg - stats.def * 0.35));
+    let effectiveRaw = rawDmg;
+    let isCritHit = false;
+    let isStunHit = false;
+
+    if (!options?.isHazard) {
+      const combatRes = resolveCombatHit({
+        rawAtk: rawDmg,
+        targetDef: 0,
+        critRate: options?.isBoss ? 0.15 : 0.08,
+        missChance: 0.08,
+        stunChance: options?.stunChance ?? 0.08,
+        rngHit: Math.random(),
+        rngCrit: Math.random(),
+        rngStun: Math.random(),
+      });
+      if (combatRes.missed) {
+        this.invulnTimer = 0.18;
+        this.spawnFloatingText(this.hx, this.hy - 26, 'MISS!', '#94a3b8');
+        this.spawnParticles(this.hx, this.hy - 12, '#94a3b8', 4, 40);
+        return;
+      }
+      effectiveRaw = combatRes.damage;
+      isCritHit = combatRes.isCrit;
+      isStunHit = combatRes.stunned;
+    }
+
+    const blocking = this.isBlocking;
+    const dmg = computeBlockedDamage(effectiveRaw, stats.def, blocking);
     this.hp = Math.max(0, this.hp - dmg);
     this.runDamageTaken += dmg;
-    this.invulnTimer = 1.1;
-    this.hurtTimer = 0.24;
+    this.invulnTimer = blocking ? 0.55 : 1.1;
+    this.hurtTimer = blocking ? 0.08 : 0.24;
     this.dashTimer = 0;
+    this.isDodgeDash = false;
     this.onLadder = false;
     this.onMonkeyBar = false;
     if (knockDir !== 0) {
-      this.hvx = knockDir * 110;
-      this.hvy = -125;
+      this.hvx = knockDir * (blocking ? 48 : 110);
+      this.hvy = blocking ? -48 : -125;
     }
-    this.hitstopTimer = 0.05;
-    this.shakeTrauma = Math.min(1, this.shakeTrauma + 0.55);
+    this.hitstopTimer = blocking ? 0.03 : 0.05;
+    this.shakeTrauma = Math.min(1, this.shakeTrauma + (blocking ? 0.22 : isCritHit ? 0.65 : 0.55));
 
-    gameAudio.playHurt();
-    this.spawnFloatingText(this.hx, this.hy - 24, `-${dmg}`, '#f87171');
-    this.spawnParticles(this.hx, this.hy - 12, '#ef4444', 10, 80);
+    // Drop Portal Key if hero takes damage while carrying it!
+    if (this.keyObj.active && this.keyObj.carried) {
+      this.keyObj.carried = false;
+      this.keyObj.pickupCooldown = 0.9;
+      this.keyObj.vx = -this.hFacing * 70;
+      this.keyObj.vy = -125;
+      this.spawnFloatingText(this.hx, this.hy - 36, 'KEY DROPPED!', '#facc15');
+    }
+
+    if (isStunHit && !blocking && this.hp > 0) {
+      this.heroStunTimer = 0.55;
+      this.spawnFloatingText(this.hx, this.hy - 34, 'STUN!', '#fde047');
+    }
+
+    if (blocking) {
+      gameAudio.playNoAmmo();
+      this.spawnFloatingText(this.hx, this.hy - 24, `BLK -${dmg}`, '#38bdf8');
+      this.spawnParticles(this.hx + this.hFacing * 6, this.hy - 12, '#38bdf8', 7, 65);
+    } else {
+      gameAudio.playHurt();
+      this.spawnFloatingText(
+        this.hx,
+        this.hy - 24,
+        isCritHit ? `CRIT -${dmg}!` : `-${dmg}`,
+        isCritHit ? '#facc15' : '#f87171',
+      );
+      this.spawnParticles(this.hx, this.hy - 12, isCritHit ? '#facc15' : '#ef4444', 10, 80);
+    }
 
     if (this.hp <= 0) {
       this.isDead = true;
@@ -1721,6 +2435,8 @@ export class GameEngine {
     slot.vy = opts.vy;
     slot.damage = opts.damage;
     slot.isCrit = opts.isCrit;
+    slot.isCharged = opts.isCharged;
+    slot.stunChance = opts.stunChance;
     slot.spriteCol = opts.spriteCol;
     slot.maxRange = opts.maxRange;
     slot.pierce = opts.pierce;
@@ -1779,8 +2495,14 @@ export class GameEngine {
             }
             if (!p.pierce) p.active = false;
             else p.life = Math.min(p.life, 0.25);
+
+            if (!p.isCharged && Math.random() < 0.06) {
+              this.spawnFloatingText(e.x, e.y - e.h - 4, 'MISS!', '#94a3b8');
+              break;
+            }
+            const stunHit = Math.random() < p.stunChance;
             this.spawnVfx(p.x, p.y, 2, 4, 4, 0.22);
-            this.applyDamageToEnemy(e, p.damage, p.isCrit, Math.sign(p.vx) || 1, p.element);
+            this.applyDamageToEnemy(e, p.damage, p.isCrit, Math.sign(p.vx) || 1, p.element, stunHit, 0.75);
             break;
           }
         }
@@ -1788,7 +2510,7 @@ export class GameEngine {
         if (this.invulnTimer <= 0 && Math.abs(p.x - this.hx) < 8 && p.y >= this.hy - 20 && p.y <= this.hy) {
           p.active = false;
           this.spawnVfx(p.x, p.y, 2, 4, 4, 0.2);
-          this.damageHero(p.damage, Math.sign(p.vx) || -1);
+          this.damageHero(p.damage, Math.sign(p.vx) || -1, { stunChance: p.stunChance });
         }
       }
     }
@@ -1918,56 +2640,52 @@ export class GameEngine {
     }
   }
 
+  private isExitUnlocked(): boolean {
+    switch (this.area.portalRule) {
+      case 'boss':
+        return !this.enemies.some((e) => e.kind === 'boss' && !e.dead);
+      case 'kills':
+        return this.areaKills >= KILLS_TO_OPEN_EXIT;
+      case 'key':
+        return this.keyObj.active && this.keyObj.carried;
+      case 'lever':
+        return this.leverActivated;
+    }
+  }
+
   private checkPortals() {
     if (this.portalCooldown > 0) return;
     for (const portal of this.area.portals) {
       if (Math.hypot(this.hx - portal.x, this.hy - 10 - (portal.y - 12)) < 18) {
-        if (portal.kind === 'warp' && portal.targetPortalId !== undefined) {
-          const dest = this.area.portals.find((p) => p.id === portal.targetPortalId);
-          if (dest) {
-            this.portalCooldown = 1.1;
-            this.hx = dest.x;
-            this.hy = dest.y;
-            this.hvy = -60;
-            this.onMonkeyBar = false;
-            this.onLadder = false;
-            gameAudio.playDash();
-            this.spawnParticles(dest.x, dest.y - 12, '#38bdf8', 14, 75);
-            this.spawnFloatingText(dest.x, dest.y - 26, 'WARP!', '#38bdf8');
-          }
-          return;
-        }
-
-        if (portal.kind === 'exit') {
-          if (this.area.isBossArea) {
-            const bossAlive = this.enemies.some((e) => e.kind === 'boss' && !e.dead);
-            if (bossAlive) {
-              this.portalCooldown = 0.6;
-              this.spawnFloatingText(portal.x, portal.y - 26, 'DEFEAT BOSS!', '#f87171');
-              return;
-            }
-          } else if (this.areaKills < portal.requiredKills) {
-            this.portalCooldown = 0.6;
+        if (!this.isExitUnlocked()) {
+          this.portalCooldown = 0.6;
+          if (this.area.portalRule === 'boss') {
+            this.spawnFloatingText(portal.x, portal.y - 26, 'DEFEAT BOSS!', '#f87171');
+          } else if (this.area.portalRule === 'key') {
+            this.spawnFloatingText(portal.x, portal.y - 26, 'BAWA KUNCI KE PORTAL!', '#fde047');
+          } else if (this.area.portalRule === 'lever') {
+            this.spawnFloatingText(portal.x, portal.y - 26, 'TARIK TUAS [R]!', '#facc15');
+          } else {
             this.spawnFloatingText(
               portal.x,
               portal.y - 26,
-              `KILL ${this.areaKills}/${portal.requiredKills}`,
+              `KILL ${this.areaKills}/${portal.requiredKills}!`,
               '#facc15',
             );
-            return;
-          }
-
-          if (this.areaIndex < PORTALS_PER_STAGE - 1) {
-            gameAudio.playPickup(true);
-            this.loadArea(this.areaIndex + 1);
-          } else {
-            this.stageCleared = true;
-            this.clearDelayTimer = 0.6;
-            gameAudio.playVictory();
-            this.spawnParticles(portal.x, portal.y - 12, '#38bdf8', 18, 95);
           }
           return;
         }
+
+        if (this.areaIndex < PORTALS_PER_STAGE - 1) {
+          gameAudio.playPickup(true);
+          this.loadArea(this.areaIndex + 1);
+        } else {
+          this.stageCleared = true;
+          this.clearDelayTimer = 0.6;
+          gameAudio.playVictory();
+          this.spawnParticles(portal.x, portal.y - 12, '#38bdf8', 18, 95);
+        }
+        return;
       }
     }
   }
@@ -2113,7 +2831,7 @@ export class GameEngine {
   private emitHud() {
     const stats = computeHeroStats(this.save);
     const boss = this.enemies.find((e) => e.kind === 'boss' && !e.dead);
-    const req = this.area.isBossArea ? 0 : KILLS_TO_OPEN_EXIT;
+    const req = this.area.portalRule === 'kills' ? KILLS_TO_OPEN_EXIT : 0;
     this.callbacks.onHudUpdate({
       hp: Math.round(this.hp),
       maxHp: Math.round(this.maxHp),
@@ -2128,6 +2846,13 @@ export class GameEngine {
       totalPortals: PORTALS_PER_STAGE,
       areaKills: this.areaKills,
       requiredKills: req,
+      leverActivated: this.leverActivated,
+      hasLever: Boolean(this.area.lever),
+      portalRule: this.area.portalRule,
+      carryingKey: this.keyObj.active && this.keyObj.carried,
+      hasKey: this.keyObj.active,
+      heroStunned: this.heroStunTimer > 0,
+      dodgeActive: this.dodgeWindowTimer > 0,
       biomeName: this.stage.biome.name,
       score: this.runScore,
       bossHpPct: boss ? Math.max(0, Math.round((boss.hp / boss.maxHp) * 100)) : null,
@@ -2210,8 +2935,8 @@ export class GameEngine {
       ctx.drawImage(this.sprites.tiles, 6 * 16, tileBiomeY, 16, 16, mx + 16, my, 16, 16);
     }
 
-    // 3. Large Rotating Square Portals (Branch Warp + Exit Portal)
-    const bossBlocking = this.area.isBossArea && this.enemies.some((e) => e.kind === 'boss' && !e.dead);
+    // 3. Large Rotating Exit Portal (unlocks at 5 Kills OR overhead Lever)
+    const exitUnlocked = this.isExitUnlocked();
     const pFrame = Math.floor(this.portalAnim) % 8;
 
     for (const portal of this.area.portals) {
@@ -2219,28 +2944,58 @@ export class GameEngine {
       const py = Math.round(portal.y) - 30;
       if (px < -36 || px > CANVAS_SIZE + 36) continue;
 
-      const isExit = portal.kind === 'exit';
-      const locked = isExit && (bossBlocking || (!this.area.isBossArea && this.areaKills < portal.requiredKills));
-      const row = isExit ? 0 : 1;
-
+      const locked = !exitUnlocked;
       if (locked) ctx.globalAlpha = 0.38;
-      ctx.drawImage(this.sprites.portals, pFrame * 32, row * 32, 32, 32, px, py, 32, 32);
+      ctx.drawImage(this.sprites.portals, pFrame * 32, 0, 32, 32, px, py, 32, 32);
       ctx.globalAlpha = 1;
 
-      // Crisp portal label above
       ctx.font = 'bold 6px monospace';
       ctx.textAlign = 'center';
-      const label = !isExit
-        ? 'WARP'
-        : bossBlocking
+      const label = !locked
+        ? 'EXIT!'
+        : this.area.portalRule === 'boss'
           ? 'BOSS'
-          : locked
-            ? `${this.areaKills}/${portal.requiredKills}`
-            : 'EXIT!';
+          : this.area.portalRule === 'key'
+            ? 'KEY'
+            : this.area.portalRule === 'lever'
+              ? 'TUAS'
+              : `${this.areaKills}/${portal.requiredKills}`;
       ctx.fillStyle = '#0f111a';
       ctx.fillText(label, px + 17, py - 1);
-      ctx.fillStyle = !isExit ? '#38bdf8' : locked ? '#facc15' : '#4ade80';
+      ctx.fillStyle = locked ? '#facc15' : '#4ade80';
       ctx.fillText(label, px + 16, py - 2);
+    }
+
+    // 3b. High Overhead Lever ("TUAS") activated by Grappling Hook [R]
+    if (this.area.lever) {
+      const lx = Math.round(this.area.lever.x - camI);
+      const ly = Math.round(this.area.lever.y);
+      if (lx >= -24 && lx <= CANVAS_SIZE + 24) {
+        ctx.fillStyle = '#334155';
+        ctx.fillRect(lx - 7, ly - 8, 14, 7);
+        ctx.strokeStyle = '#94a3b8';
+        ctx.lineWidth = 1;
+        ctx.strokeRect(lx - 7, ly - 8, 14, 7);
+
+        // Lever handle tilts left (red OFF) or right (green ON)
+        ctx.strokeStyle = this.leverActivated ? '#4ade80' : '#ef4444';
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.moveTo(lx, ly - 3);
+        ctx.lineTo(lx + (this.leverActivated ? 7 : -7), ly + 5);
+        ctx.stroke();
+
+        ctx.fillStyle = this.leverActivated ? '#4ade80' : '#f87171';
+        ctx.fillRect(lx - 2, ly - 6, 4, 4);
+
+        ctx.font = 'bold 6px monospace';
+        ctx.textAlign = 'center';
+        const lText = this.leverActivated ? 'TUAS ON' : '[R] TUAS';
+        ctx.fillStyle = '#0f111a';
+        ctx.fillText(lText, lx + 1, ly + 13);
+        ctx.fillStyle = this.leverActivated ? '#4ade80' : '#fde047';
+        ctx.fillText(lText, lx, ly + 12);
+      }
     }
 
     // 4. Treasure Chests PNG
@@ -2306,10 +3061,49 @@ export class GameEngine {
           ctx.fillRect(sxScreen - 1, ly - 10, 2, 4);
           ctx.fillRect(sxScreen - 1, ly - 5, 2, 2);
         }
+        if (e.stunTimer > 0) {
+          const stBob = Math.sin(this.portalAnim * 2) * 3;
+          ctx.fillStyle = '#fde047';
+          ctx.fillRect(sxScreen - 5 + stBob, ly - 9, 2, 2);
+          ctx.fillRect(sxScreen + 4 - stBob, ly - 9, 2, 2);
+        }
       }
     }
 
-    // 7. Hero Sprite PNG (18 animations incl. hangClimb)
+    // 6b. Floating / Grounded Portal Key ("kunci")
+    if (this.keyObj.active) {
+      const kx = Math.round(this.keyObj.x - camI);
+      const ky = Math.round(this.keyObj.y + (this.keyObj.carried ? 0 : Math.sin(this.portalAnim) * 2));
+      if (kx >= -18 && kx <= CANVAS_SIZE + 18) {
+        ctx.save();
+        ctx.fillStyle = 'rgba(250, 204, 21, 0.25)';
+        ctx.beginPath();
+        ctx.arc(kx, ky, 7, 0, Math.PI * 2);
+        ctx.fill();
+        // Pixel Golden Key
+        ctx.fillStyle = '#0f172a';
+        ctx.fillRect(kx - 5, ky - 4, 11, 7);
+        ctx.fillStyle = '#fde047';
+        ctx.fillRect(kx - 4, ky - 3, 4, 5);
+        ctx.fillStyle = '#0f172a';
+        ctx.fillRect(kx - 3, ky - 2, 2, 3);
+        ctx.fillStyle = '#facc15';
+        ctx.fillRect(kx, ky - 1, 5, 2);
+        ctx.fillRect(kx + 2, ky + 1, 1, 2);
+        ctx.fillRect(kx + 4, ky + 1, 1, 2);
+        if (!this.keyObj.carried) {
+          ctx.font = 'bold 6px monospace';
+          ctx.textAlign = 'center';
+          ctx.fillStyle = '#0f111a';
+          ctx.fillText('KEY', kx + 1, ky - 6);
+          ctx.fillStyle = '#fde047';
+          ctx.fillText('KEY', kx, ky - 7);
+        }
+        ctx.restore();
+      }
+    }
+
+    // 7. Hero Sprite PNG (19 animations incl. hangClimb & block)
     const spec = HERO_ANIMS[this.animName];
     const rawFrame = Math.floor(this.animTime * spec.fps);
     const frameIdx = spec.loop ? rawFrame % spec.frames : Math.min(spec.frames - 1, rawFrame);
@@ -2322,6 +3116,79 @@ export class GameEngine {
       ctx.translate(drawHx, drawHy);
       ctx.scale(this.hFacing * this.squashX, this.squashY);
       ctx.drawImage(this.sprites.hero, frameIdx * 32, spec.row * 32, 32, 32, -16, -28, 32, 32);
+      ctx.restore();
+    }
+
+    // Charge Aura for Sword [A] & Gun [X]
+    if ((this.swordChargeTimer >= 0.25 || this.gunChargeTimer >= 0.25) && !this.isDead) {
+      const isSwordCharge = this.swordChargeTimer >= this.gunChargeTimer;
+      const chargeT = isSwordCharge ? this.swordChargeTimer : this.gunChargeTimer;
+      const ready = chargeT >= 0.55;
+      ctx.save();
+      ctx.strokeStyle = ready ? (isSwordCharge ? '#fde047' : '#22d3ee') : '#60a5fa';
+      ctx.lineWidth = ready ? 2 : 1;
+      ctx.beginPath();
+      ctx.arc(drawHx, drawHy - 13, ready ? 13 + Math.sin(this.portalAnim * 3) * 2 : 11, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.restore();
+    }
+
+    // Hero Stun stars overlay
+    if (this.heroStunTimer > 0 && !this.isDead) {
+      const hStunBob = Math.sin(this.portalAnim * 2.5) * 4;
+      ctx.fillStyle = '#fde047';
+      ctx.fillRect(drawHx - 6 + hStunBob, drawHy - 30, 2, 2);
+      ctx.fillRect(drawHx + 5 - hStunBob, drawHy - 30, 2, 2);
+    }
+
+    // Dodge Window outline
+    if (this.dodgeWindowTimer > 0 && !this.isDead) {
+      ctx.save();
+      ctx.strokeStyle = 'rgba(56, 189, 248, 0.7)';
+      ctx.lineWidth = 1;
+      ctx.strokeRect(drawHx - 7, drawHy - 24, 14, 24);
+      ctx.restore();
+    }
+
+    // Active Block Shield energy overlay when holding L
+    if (this.isBlocking && !this.isDead) {
+      ctx.save();
+      ctx.strokeStyle = '#38bdf8';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(drawHx + this.hFacing * 8, drawHy - 22);
+      ctx.lineTo(drawHx + this.hFacing * 10, drawHy - 12);
+      ctx.lineTo(drawHx + this.hFacing * 8, drawHy - 3);
+      ctx.stroke();
+      ctx.restore();
+    }
+
+    // 360-degree Grapple Aim Indicator when dragging R·HOOK or aiming pointer
+    const activeAimAngle = this.grapplePreviewAngle ?? this.pointerAimAngle;
+    if (activeAimAngle !== null && !this.isDead && !this.grapple.active) {
+      ctx.save();
+      ctx.fillStyle = this.grapplePreviewAngle !== null ? '#fde047' : 'rgba(56, 189, 248, 0.75)';
+      for (const d of [14, 22, 30]) {
+        const ax = Math.round(drawHx + Math.cos(activeAimAngle) * d);
+        const ay = Math.round(drawHy - 14 + Math.sin(activeAimAngle) * d);
+        ctx.fillRect(ax - 1, ay - 1, 2, 2);
+      }
+      ctx.restore();
+    }
+
+    // Active Grappling Hook cable & claw when pressing R
+    if (this.grapple.active) {
+      const gx = Math.round(this.grapple.x - camI);
+      const gy = Math.round(this.grapple.y);
+      ctx.save();
+      ctx.strokeStyle = '#cbd5e1';
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.moveTo(drawHx + this.hFacing * 4, drawHy - 14);
+      ctx.lineTo(gx, gy);
+      ctx.stroke();
+      ctx.fillStyle = this.save.equippedGrapple === 'plasma_grapple' ? '#22d3ee' : '#facc15';
+      ctx.fillRect(gx - 3, gy - 3, 6, 6);
       ctx.restore();
     }
 
@@ -2346,7 +3213,8 @@ export class GameEngine {
       if (this.slash.dirY < 0) ctx.rotate(-Math.PI / 2);
       else if (this.slash.dirY > 0) ctx.rotate(Math.PI / 2);
       else if (this.hFacing < 0) ctx.scale(-1, 1);
-      if (this.slash.isHeavy) ctx.scale(1.25, 1.25);
+      if (this.slash.isChargedSkill) ctx.scale(1.45, 1.45);
+      else if (this.slash.isHeavy) ctx.scale(1.25, 1.25);
       ctx.drawImage(this.sprites.swords, slashFrame * 32, srcY, 32, 32, -16, -16, 32, 32);
       ctx.restore();
     }
@@ -2356,6 +3224,10 @@ export class GameEngine {
       if (!p.active) continue;
       const px = Math.round(p.x - camI) - 8;
       const py = Math.round(p.y) - 8;
+      if (p.isCharged) {
+        ctx.fillStyle = 'rgba(34, 211, 238, 0.45)';
+        ctx.fillRect(px + 2, py + 2, 12, 12);
+      }
       if (p.useGunSheet) {
         ctx.drawImage(this.sprites.guns, p.spriteCol * 16, 16, 16, 16, px, py, 16, 16);
       } else {
@@ -2437,15 +3309,19 @@ export class GameEngine {
     ctx.fillStyle = '#38bdf8';
     ctx.fillText(`L${this.save.level}`, 136, 10);
 
-    // Kill gate status + Portal 1/5
-    if (this.area.isBossArea) {
-      ctx.fillStyle = '#f87171';
-      ctx.fillText('BOSS', 162, 10);
-    } else {
-      const open = this.areaKills >= KILLS_TO_OPEN_EXIT;
-      ctx.fillStyle = open ? '#4ade80' : '#facc15';
-      ctx.fillText(open ? 'EXIT' : `K${this.areaKills}/5`, 162, 10);
-    }
+    // Portal Rule Status + Portal 1/5
+    const open = this.isExitUnlocked();
+    ctx.fillStyle = open ? '#4ade80' : '#facc15';
+    const ruleLabel = open
+      ? 'EXIT'
+      : this.area.portalRule === 'boss'
+        ? 'BOSS'
+        : this.area.portalRule === 'key'
+          ? 'KEY'
+          : this.area.portalRule === 'lever'
+            ? 'TUAS'
+            : `K${this.areaKills}/5`;
+    ctx.fillText(ruleLabel, 160, 10);
 
     ctx.fillStyle = '#fde047';
     ctx.fillText(`P${this.areaIndex + 1}/5`, 192, 10);

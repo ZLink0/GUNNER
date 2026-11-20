@@ -24,17 +24,44 @@ test('All 100 stages generate 5 long roguelike areas, 6 biomes, moving platforms
     assert.equal(data.isBossStage, s % 5 === 0);
     assert.equal(data.areas.length, PORTALS_PER_STAGE, `Stage ${s} must have 5 portal areas`);
 
+    let prevRule: string | null = null;
+    const stageNonBossRules = new Set<string>();
     for (let aIdx = 0; aIdx < data.areas.length; aIdx++) {
       const area = data.areas[aIdx];
       assert.equal(area.areaIndex, aIdx);
       if (!area.isBossArea) {
         assert.ok(area.cols >= 68, `Stage ${s} area ${aIdx + 1} should be long (>= 68 cols)`);
-        // Multiple portals per roguelike area (2 warp + 1 exit)
-        assert.ok(area.portals.length >= 3, `Stage ${s} A${aIdx + 1} should have multiple portals`);
-        const exitPortal = area.portals.find((p) => p.kind === 'exit');
-        assert.ok(exitPortal, `Stage ${s} A${aIdx + 1} must have exit portal`);
-        assert.equal(exitPortal.requiredKills, KILLS_TO_OPEN_EXIT);
-        assert.equal(KILLS_TO_OPEN_EXIT, 5);
+        // Only Exit Portal per area (no warp portals)
+        assert.equal(area.portals.length, 1, `Stage ${s} A${aIdx + 1} should have 1 exit portal only`);
+        assert.equal(area.portals[0].kind, 'exit');
+        assert.equal(area.portals[0].rule, area.portalRule);
+        assert.notEqual(
+          area.portalRule,
+          prevRule,
+          `Stage ${s} A${aIdx + 1} rule (${area.portalRule}) must differ from previous area`,
+        );
+        prevRule = area.portalRule;
+        stageNonBossRules.add(area.portalRule);
+
+        if (area.portalRule === 'kills') {
+          assert.equal(area.portals[0].requiredKills, KILLS_TO_OPEN_EXIT);
+          assert.equal(KILLS_TO_OPEN_EXIT, 5);
+          assert.equal(area.lever, undefined);
+          assert.equal(area.keySpawn, undefined);
+        } else if (area.portalRule === 'lever') {
+          // Overhead Lever ("tuas") placed high up (row 2 -> y = 40px), unreachable by normal jump
+          assert.ok(area.lever, `Stage ${s} A${aIdx + 1} must have overhead lever`);
+          assert.ok(area.lever.y <= 56, `Lever y=${area.lever.y} should be high overhead`);
+          const lCol = Math.floor(area.lever.x / TILE_SIZE);
+          for (let rClear = 3; rClear <= 6; rClear++) {
+            assert.notEqual(area.tiles[rClear][lCol], 3, 'No platform directly beneath lever');
+            assert.notEqual(area.tiles[rClear][lCol], 4, 'No ladder directly beneath lever');
+          }
+          assert.equal(area.keySpawn, undefined);
+        } else if (area.portalRule === 'key') {
+          assert.ok(area.keySpawn, `Stage ${s} A${aIdx + 1} must spawn a portal key`);
+          assert.equal(area.lever, undefined);
+        }
       }
 
       for (const mp of area.movingPlatforms) {

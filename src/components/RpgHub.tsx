@@ -5,10 +5,12 @@ import {
   claimQuestReward,
   computeHeroStats,
   craftArmor,
+  craftGrapple,
   craftGun,
   craftSword,
   getArmorDef,
   getExpForNextLevel,
+  getGrappleDef,
   getGunDef,
   getNextAmmoUpgradeTier,
   getQuestProgress,
@@ -16,6 +18,7 @@ import {
   getSwordUpgradeCost,
   isQuestComplete,
   upgradeArmor,
+  upgradeGrapple,
   upgradeGun,
   upgradeSword,
 } from '../game/rpgLogic';
@@ -24,7 +27,9 @@ import { getBiomeForStage } from '../game/stageGenerator';
 import {
   ACCESSORIES,
   ARMORS,
+  GRAPPLE_HOOKS,
   GUNS,
+  GrappleId,
   GunId,
   HubTab,
   MAX_HP_POTIONS,
@@ -65,7 +70,7 @@ export const RpgHub: React.FC<RpgHubProps> = ({
   const [selectedWorld, setSelectedWorld] = useState<number>(
     Math.floor((save.highestUnlockedStage - 1) / 20),
   );
-  const [smithFilter, setSmithFilter] = useState<'all' | 'guns' | 'swords' | 'armors'>('all');
+  const [smithFilter, setSmithFilter] = useState<'all' | 'guns' | 'swords' | 'armors' | 'hooks'>('all');
   const [toast, setToast] = useState<string | null>(null);
   const hubRef = useRef<HTMLDivElement | null>(null);
 
@@ -180,7 +185,7 @@ export const RpgHub: React.FC<RpgHubProps> = ({
                   {WORLD_NAMES[Math.floor((save.highestUnlockedStage - 1) / 20)]} · {nextBiome.name}
                 </div>
                 <div className="text-[#94a3b8] text-[8px] tabular-nums">
-                  Cleared: {save.clearedStages.length}/100 · Kill 5 → Exit · Stg {save.highestUnlockedStage}
+                  Cleared: {save.clearedStages.length}/100 · 5 Kill / Tuas → Exit · Stg {save.highestUnlockedStage}
                 </div>
               </div>
               <button
@@ -423,13 +428,14 @@ export const RpgHub: React.FC<RpgHubProps> = ({
         {activeTab === 'blacksmith' && (
           <div className="space-y-2">
             {/* Blacksmith Filter Toggle */}
-            <div className="grid grid-cols-4 gap-1">
+            <div className="grid grid-cols-5 gap-1">
               {(
                 [
                   { id: 'all', label: 'ALL' },
-                  { id: 'guns', label: 'GUNS (10)' },
-                  { id: 'swords', label: 'SWORDS (10)' },
-                  { id: 'armors', label: 'ARMOR (5)' },
+                  { id: 'guns', label: 'GUNS' },
+                  { id: 'swords', label: 'SWORDS' },
+                  { id: 'armors', label: 'ARMOR' },
+                  { id: 'hooks', label: 'HOOK' },
                 ] as const
               ).map((f) => (
                 <button
@@ -439,7 +445,7 @@ export const RpgHub: React.FC<RpgHubProps> = ({
                     gameAudio.playMenuMove();
                     setSmithFilter(f.id);
                   }}
-                  className={`py-1 px-1 border text-[8px] cursor-pointer truncate ${
+                  className={`py-1 px-0.5 border text-[8px] cursor-pointer truncate ${
                     smithFilter === f.id
                       ? 'bg-[#1d4ed8] border-[#facc15] text-white'
                       : 'bg-[#111827] border-[#26324d] text-[#94a3b8]'
@@ -667,6 +673,73 @@ export const RpgHub: React.FC<RpgHubProps> = ({
                 </div>
               </>
             )}
+
+            {(smithFilter === 'all' || smithFilter === 'hooks') && (
+              <>
+                <div className="text-[#22d3ee] font-bold pt-1">Grappling Hook [R] (+1 to +10)</div>
+                <div className="space-y-1">
+                  {(save.ownedGrapples ?? ['iron_grapple']).map((gid) => {
+                    const gh = getGrappleDef(gid);
+                    const lvl = save.grappleUpgrades?.[gid] ?? 0;
+                    const cost = getSwordUpgradeCost(lvl);
+                    return (
+                      <div key={gid} className="flex items-center justify-between bg-[#111827] border border-[#26324d] p-1.5 gap-2">
+                        <div className="flex items-center gap-2 min-w-0">
+                          {icons?.grappleIcons[gh.spriteIndex - 4] && (
+                            <img src={icons.grappleIcons[gh.spriteIndex - 4]} alt={gh.name} referrerPolicy="no-referrer" className="w-5 h-5 pixelated shrink-0" />
+                          )}
+                          <div className="min-w-0">
+                            <div className="text-white font-bold truncate">
+                              {gh.name} <span className="text-[#facc15]">+{lvl}</span>
+                            </div>
+                            <div className="text-[#94a3b8] text-[8px]">
+                              {lvl >= 10
+                                ? 'MAX LEVEL'
+                                : `${cost.gold}G · ${cost.materials} IRON${cost.crystals ? ` · ${cost.crystals}CR` : ''}`}
+                            </div>
+                          </div>
+                        </div>
+                        <button
+                          type="button"
+                          disabled={lvl >= 10}
+                          onClick={() => handleAction(upgradeGrapple(save, gid))}
+                          className={`px-2 py-1 border text-[8px] shrink-0 ${
+                            lvl >= 10
+                              ? 'bg-[#090d16] border-[#1e293b] text-[#4ade80]'
+                              : 'bg-[#b45309] hover:bg-[#d97706] border-[#fde047] text-white cursor-pointer'
+                          }`}
+                        >
+                          {lvl >= 10 ? 'MAX' : 'UPGRADE'}
+                        </button>
+                      </div>
+                    );
+                  })}
+                  {GRAPPLE_HOOKS.filter((gh) => gh.craftCost && !(save.ownedGrapples ?? ['iron_grapple']).includes(gh.id)).map((gh) => (
+                    <div key={gh.id} className="flex items-center justify-between bg-[#111827] border border-[#26324d] p-1.5 gap-2">
+                      <div className="flex items-center gap-2 min-w-0">
+                        {icons?.grappleIcons[gh.spriteIndex - 4] && (
+                          <img src={icons.grappleIcons[gh.spriteIndex - 4]} alt={gh.name} referrerPolicy="no-referrer" className="w-5 h-5 pixelated shrink-0" />
+                        )}
+                        <div className="min-w-0">
+                          <div className="text-white font-bold truncate">{gh.name}</div>
+                          <div className="text-[#94a3b8] text-[8px] truncate">
+                            {gh.craftCost!.gold}G · {gh.craftCost!.materials} IRON ·{' '}
+                            <span className="text-[#22d3ee]">{gh.craftCost!.crystals}CR</span> · {gh.effectLabel}
+                          </div>
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => handleAction(craftGrapple(save, gh.id))}
+                        className="px-2 py-1 bg-[#1d4ed8] hover:bg-[#2563eb] border border-[#38bdf8] text-white text-[8px] shrink-0 cursor-pointer"
+                      >
+                        FORGE
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              </>
+            )}
           </div>
         )}
 
@@ -828,6 +901,58 @@ export const RpgHub: React.FC<RpgHubProps> = ({
                         onClick={() => {
                           gameAudio.playMenuSelect();
                           onUpdateSave({ ...save, equippedArmor: a.id });
+                        }}
+                        className={`px-2 py-1 border text-[8px] shrink-0 ${
+                          eq
+                            ? 'bg-[#16a34a] border-[#fde047] text-white'
+                            : 'bg-[#1e293b] hover:bg-[#334155] border-[#475569] text-[#cbd5e1] cursor-pointer'
+                        }`}
+                      >
+                        {eq ? 'EQUIPPED' : 'EQUIP'}
+                      </button>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+
+            <div className="text-[#22d3ee] font-bold pt-1">Grappling Hook [R] ({(save.ownedGrapples ?? ['iron_grapple']).length}/2)</div>
+            <div className="space-y-1">
+              {GRAPPLE_HOOKS.map((gh) => {
+                const owned = (save.ownedGrapples ?? ['iron_grapple']).includes(gh.id);
+                const eq = (save.equippedGrapple ?? 'iron_grapple') === gh.id;
+                const upg = save.grappleUpgrades?.[gh.id] ?? 0;
+                return (
+                  <div
+                    key={gh.id}
+                    className={`flex items-center justify-between border p-1.5 gap-2 ${
+                      eq
+                        ? 'bg-[#172554] border-[#facc15]'
+                        : owned
+                          ? 'bg-[#111827] border-[#26324d]'
+                          : 'bg-[#090d16] border-[#1e293b] opacity-55'
+                    }`}
+                  >
+                    <div className="flex items-center gap-2 min-w-0">
+                      {icons?.grappleIcons[gh.spriteIndex - 4] && (
+                        <img src={icons.grappleIcons[gh.spriteIndex - 4]} alt={gh.name} referrerPolicy="no-referrer" className="w-5 h-5 pixelated shrink-0" />
+                      )}
+                      <div className="min-w-0">
+                        <div className="text-white font-bold truncate">
+                          {gh.name} {owned && upg > 0 ? `+${upg}` : ''}
+                        </div>
+                        <div className="text-[#94a3b8] text-[8px] truncate">
+                          {owned ? `Range ${gh.rangePx + upg * 6}px · ${gh.effectLabel}` : `Forge in Smith (${gh.craftCost?.crystals ?? 0}CR)`}
+                        </div>
+                      </div>
+                    </div>
+                    {owned && (
+                      <button
+                        type="button"
+                        disabled={eq}
+                        onClick={() => {
+                          gameAudio.playMenuSelect();
+                          onUpdateSave({ ...save, equippedGrapple: gh.id as GrappleId });
                         }}
                         className={`px-2 py-1 border text-[8px] shrink-0 ${
                           eq

@@ -7,22 +7,30 @@ import {
   buyShopItem,
   calculateAttackDamage,
   claimQuestReward,
+  computeBlockedDamage,
+  computeChargedGunDamage,
+  computeChargedGunRange,
   computeHeroStats,
   consumeAmmo,
   craftArmor,
+  craftGrapple,
   craftGun,
   craftSword,
   createDefaultSave,
+  createDefaultSettings,
   getExpForNextLevel,
   refillAmmo,
+  resolveCombatHit,
+  rollChargedSlashStun,
   rollEnemyDropKind,
   shouldEnemyDropItem,
   upgradeAmmoCapacity,
   upgradeArmor,
+  upgradeGrapple,
   upgradeGun,
   upgradeSword,
 } from './rpgLogic';
-import { ARMORS, GUNS, MAX_HP_POTIONS, SWORDS } from './types';
+import { ARMORS, GRAPPLE_HOOKS, GUNS, MAX_HP_POTIONS, SWORDS } from './types';
 
 test('EXP and Level 1-100 progression scales and caps at 100', () => {
   const save = createDefaultSave();
@@ -229,4 +237,85 @@ test('Shop sells accessories/consumables while Blacksmith forges/upgrades Swords
   assert.equal(claim.ok, true);
   assert.ok(claim.next.ownedSwords.includes('holy_sword'));
 });
+
+test('Blocking (L) reduces incoming damage but ALWAYS deals >= 1 HP damage; Grappling Hooks craft & upgrade', () => {
+  const unblocked = computeBlockedDamage(30, 10, false);
+  const blocked = computeBlockedDamage(30, 10, true);
+  assert.ok(blocked < unblocked, 'Blocking should reduce damage');
+  assert.ok(blocked >= 1, 'Blocking must still take >= 1 damage');
+
+  // Even against huge DEF vs tiny raw damage, block still takes >= 1 HP
+  const tinyBlocked = computeBlockedDamage(2, 999, true);
+  assert.equal(tinyBlocked, 1);
+
+  assert.equal(GRAPPLE_HOOKS.length, 2);
+  let save = {
+    ...createDefaultSave(),
+    gold: 2000,
+    weaponMaterials: 20,
+    rareCrystals: 100,
+  };
+  assert.equal(save.equippedGrapple, 'iron_grapple');
+  assert.ok(save.ownedGrapples.includes('iron_grapple'));
+
+  const forgeHook = craftGrapple(save, 'plasma_grapple');
+  assert.equal(forgeHook.ok, true);
+  assert.equal(forgeHook.next.equippedGrapple, 'plasma_grapple');
+  save = forgeHook.next;
+
+  const upgHook = upgradeGrapple(save, 'plasma_grapple');
+  assert.equal(upgHook.ok, true);
+  assert.equal(upgHook.next.grappleUpgrades.plasma_grapple, 1);
+
+  const defSettings = createDefaultSettings();
+  assert.equal(defSettings.buttonLayout.preset, 'standard');
+  assert.equal(defSettings.buttonLayout.swapHands, false);
+});
+
+test('Universal Miss/Crit/Stun combat resolution + Charged A (30% stun) & Charged X (+DMG & +4 blocks range)', () => {
+  // Miss outcome
+  const missRes = resolveCombatHit({
+    rawAtk: 40,
+    targetDef: 2,
+    critRate: 0.5,
+    missChance: 0.1,
+    stunChance: 0.5,
+    rngHit: 0.05,
+    rngCrit: 0.01,
+    rngStun: 0.01,
+  });
+  assert.equal(missRes.missed, true);
+  assert.equal(missRes.damage, 0);
+  assert.equal(missRes.isCrit, false);
+  assert.equal(missRes.stunned, false);
+
+  // Critical + Stun outcome
+  const critStunRes = resolveCombatHit({
+    rawAtk: 40,
+    targetDef: 0,
+    critRate: 0.25,
+    missChance: 0.1,
+    stunChance: 0.3,
+    rngHit: 0.5,
+    rngCrit: 0.1,
+    rngStun: 0.2,
+  });
+  assert.equal(critStunRes.missed, false);
+  assert.equal(critStunRes.isCrit, true);
+  assert.equal(critStunRes.stunned, true);
+  assert.equal(critStunRes.damage, 70);
+
+  // Charged Slash (A) exact 30% stun chance
+  assert.equal(rollChargedSlashStun(0.0), true);
+  assert.equal(rollChargedSlashStun(0.299), true);
+  assert.equal(rollChargedSlashStun(0.3), false);
+  assert.equal(rollChargedSlashStun(0.85), false);
+
+  // Charged Gun (X): adds +64px (+4 blocks >= 3+ blocks) and increases damage
+  assert.equal(computeChargedGunRange(48), 112);
+  assert.equal(computeChargedGunRange(64), 128);
+  assert.equal(computeChargedGunRange(null), null);
+  assert.ok(computeChargedGunDamage(20) > 30);
+});
+
 

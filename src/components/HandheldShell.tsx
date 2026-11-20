@@ -1,50 +1,71 @@
-import React from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
+  Anchor,
   ArrowDown,
   ArrowLeft,
   ArrowRight,
   ArrowUp,
   Crosshair,
   Pause,
-  RotateCcw,
-  RotateCw,
-  Settings,
+  RefreshCw,
+  Shield,
   Sword,
-  Volume2,
-  VolumeX,
   Zap,
 } from 'lucide-react';
 import { VirtualButton } from '../game/engine';
-import { TouchMode } from '../game/types';
+import { ButtonLayoutConfig, TouchMode } from '../game/types';
 
 export type MenuNavAction = 'up' | 'down' | 'left' | 'right' | 'ok' | 'back';
 
 interface HandheldShellProps {
   children: React.ReactNode;
   touchMode: TouchMode;
-  muted: boolean;
+  buttonLayout: ButtonLayoutConfig;
   isStagePlaying: boolean;
   onVirtualButton: (btn: VirtualButton, down: boolean) => void;
+  onGrappleAimPreview?: (angleRad: number | null) => void;
+  onGrappleFire?: (angleRad: number | null) => void;
   onMenuNav: (action: MenuNavAction) => void;
-  onToggleMute: () => void;
   onPause: () => void;
   onStart: () => void;
-  onOptions: () => void;
 }
 
 export const HandheldShell: React.FC<HandheldShellProps> = ({
   children,
   touchMode,
-  muted,
+  buttonLayout,
   isStagePlaying,
   onVirtualButton,
+  onGrappleAimPreview,
+  onGrappleFire,
   onMenuNav,
-  onToggleMute,
   onPause,
   onStart,
-  onOptions,
 }) => {
   const showPad = touchMode !== 'hidden';
+  const [isPortrait, setIsPortrait] = useState<boolean>(() =>
+    typeof window !== 'undefined' ? window.innerHeight > window.innerWidth : false,
+  );
+
+  const grappleDragRef = useRef<{
+    active: boolean;
+    startX: number;
+    startY: number;
+    moved: boolean;
+  }>({ active: false, startX: 0, startY: 0, moved: false });
+
+  useEffect(() => {
+    const updateOrientation = () => {
+      setIsPortrait(window.innerHeight > window.innerWidth);
+    };
+    updateOrientation();
+    window.addEventListener('resize', updateOrientation);
+    window.addEventListener('orientationchange', updateOrientation);
+    return () => {
+      window.removeEventListener('resize', updateOrientation);
+      window.removeEventListener('orientationchange', updateOrientation);
+    };
+  }, []);
 
   const safeCapture = (el: HTMLElement, pointerId: number) => {
     try {
@@ -130,15 +151,151 @@ export const HandheldShell: React.FC<HandheldShellProps> = ({
     },
   });
 
+  const grappleBtnProps = {
+    onPointerDown: (e: React.PointerEvent) => {
+      e.preventDefault();
+      if (!isStagePlaying) return;
+      safeCapture(e.currentTarget as HTMLElement, e.pointerId);
+      grappleDragRef.current = {
+        active: true,
+        startX: e.clientX,
+        startY: e.clientY,
+        moved: false,
+      };
+    },
+    onPointerMove: (e: React.PointerEvent) => {
+      if (!isStagePlaying || !grappleDragRef.current.active) return;
+      const dx = e.clientX - grappleDragRef.current.startX;
+      const dy = e.clientY - grappleDragRef.current.startY;
+      if (Math.hypot(dx, dy) >= 8) {
+        grappleDragRef.current.moved = true;
+        onGrappleAimPreview?.(Math.atan2(dy, dx));
+      }
+    },
+    onPointerUp: (e: React.PointerEvent) => {
+      e.preventDefault();
+      if (!isStagePlaying || !grappleDragRef.current.active) return;
+      const dx = e.clientX - grappleDragRef.current.startX;
+      const dy = e.clientY - grappleDragRef.current.startY;
+      const angle = grappleDragRef.current.moved ? Math.atan2(dy, dx) : null;
+      grappleDragRef.current.active = false;
+      grappleDragRef.current.moved = false;
+      onGrappleAimPreview?.(null);
+      if (onGrappleFire) {
+        onGrappleFire(angle);
+      } else {
+        onVirtualButton('grapple', true);
+        onVirtualButton('grapple', false);
+      }
+    },
+    onPointerCancel: () => {
+      grappleDragRef.current.active = false;
+      grappleDragRef.current.moved = false;
+      onGrappleAimPreview?.(null);
+    },
+    onLostPointerCapture: () => {
+      grappleDragRef.current.active = false;
+      grappleDragRef.current.moved = false;
+      onGrappleAimPreview?.(null);
+    },
+  };
+
   const transparentWhiteBtn =
     'bg-white/10 hover:bg-white/20 active:bg-white/35 border-2 border-white/60 text-white/95 backdrop-blur-[1px] transition-colors cursor-pointer select-none flex flex-col items-center justify-center';
 
   const dpadBtnClass =
     'bg-white/10 hover:bg-white/20 active:bg-white/35 border-2 border-white/55 text-white/90 flex items-center justify-center cursor-pointer select-none transition-colors';
 
-  const renderAbxyDiamond = (sizeClass: string, iconSize: string) => (
-    <div className="grid grid-cols-3 grid-rows-3 gap-1.5 items-center justify-items-center touch-none">
-      {/* Row 1: X (Shoot) at Top */}
+  const alignClass =
+    buttonLayout.verticalAlign === 'top'
+      ? 'justify-start pt-1'
+      : buttonLayout.verticalAlign === 'bottom'
+        ? 'justify-end pb-1'
+        : 'justify-center';
+
+  const gapClass =
+    buttonLayout.gapSize === 'tight'
+      ? 'gap-1'
+      : buttonLayout.gapSize === 'wide'
+        ? 'gap-3'
+        : 'gap-2';
+
+  const abxyBtnSize = isPortrait
+    ? buttonLayout.buttonScale === 0.85
+      ? 'w-8 h-8'
+      : buttonLayout.buttonScale === 1.15
+        ? 'w-10 h-10'
+        : 'w-9 h-9'
+    : buttonLayout.buttonScale === 0.85
+      ? 'w-7 h-7 sm:w-9 sm:h-9'
+      : buttonLayout.buttonScale === 1.15
+        ? 'w-8 h-8 sm:w-11 sm:h-11'
+        : 'w-7 h-7 sm:w-10 sm:h-10';
+
+  const dpadGridSize = isPortrait
+    ? buttonLayout.buttonScale === 0.85
+      ? 'w-[92px] h-[92px]'
+      : buttonLayout.buttonScale === 1.15
+        ? 'w-[114px] h-[114px]'
+        : 'w-[104px] h-[104px]'
+    : buttonLayout.buttonScale === 0.85
+      ? 'w-[72px] h-[72px] sm:w-24 sm:h-24'
+      : buttonLayout.buttonScale === 1.15
+        ? 'w-[84px] h-[84px] sm:w-32 sm:h-32'
+        : 'w-[76px] h-[76px] sm:w-28 sm:h-28';
+
+  const abxyIconSize = 'w-3.5 h-3.5 sm:w-4 sm:h-4';
+
+  const dpadCross = (
+    <div className={`grid grid-cols-3 grid-rows-3 gap-1 ${dpadGridSize} touch-none shrink-0`}>
+      <div />
+      <button
+        type="button"
+        aria-label="D-Pad Up"
+        tabIndex={-1}
+        {...dpadProps('up')}
+        className={`${dpadBtnClass} rounded-t`}
+      >
+        <ArrowUp className="w-3.5 h-3.5 sm:w-4 sm:h-4" strokeWidth={2.5} />
+      </button>
+      <div />
+      <button
+        type="button"
+        aria-label="D-Pad Left"
+        tabIndex={-1}
+        {...dpadProps('left')}
+        className={`${dpadBtnClass} rounded-l`}
+      >
+        <ArrowLeft className="w-3.5 h-3.5 sm:w-4 sm:h-4" strokeWidth={2.5} />
+      </button>
+      <div className="bg-white/10 border border-white/30 flex items-center justify-center">
+        <div className="w-2 h-2 sm:w-2.5 sm:h-2.5 rounded-full bg-white/25" />
+      </div>
+      <button
+        type="button"
+        aria-label="D-Pad Right"
+        tabIndex={-1}
+        {...dpadProps('right')}
+        className={`${dpadBtnClass} rounded-r`}
+      >
+        <ArrowRight className="w-3.5 h-3.5 sm:w-4 sm:h-4" strokeWidth={2.5} />
+      </button>
+      <div />
+      <button
+        type="button"
+        aria-label="D-Pad Down"
+        tabIndex={-1}
+        {...dpadProps('down')}
+        className={`${dpadBtnClass} rounded-b`}
+      >
+        <ArrowDown className="w-3.5 h-3.5 sm:w-4 sm:h-4" strokeWidth={2.5} />
+      </button>
+      <div />
+    </div>
+  );
+
+  const abxyDiamond = (
+    <div className="grid grid-cols-3 grid-rows-3 gap-1 sm:gap-1.5 items-center justify-items-center touch-none shrink-0">
       <div />
       <button
         type="button"
@@ -146,39 +303,37 @@ export const HandheldShell: React.FC<HandheldShellProps> = ({
         aria-label="X Shoot Gun"
         tabIndex={-1}
         {...abxyProps('X')}
-        className={`${sizeClass} rounded-full ${transparentWhiteBtn}`}
+        className={`${abxyBtnSize} rounded-full ${transparentWhiteBtn}`}
       >
-        <Crosshair className={iconSize} strokeWidth={2.25} />
-        <span className="font-pixel-title text-[8px] leading-none mt-0.5">X</span>
+        <Crosshair className={abxyIconSize} strokeWidth={2.25} />
+        <span className="font-pixel-title text-[6px] sm:text-[8px] leading-none mt-0.5">X</span>
       </button>
       <div />
 
-      {/* Row 2: Y (Dash) Left, Center Dot, A (Attack / OK) Right */}
       <button
         type="button"
         data-btn="Y"
         aria-label="Y Dash"
         tabIndex={-1}
         {...abxyProps('Y')}
-        className={`${sizeClass} rounded-full ${transparentWhiteBtn}`}
+        className={`${abxyBtnSize} rounded-full ${transparentWhiteBtn}`}
       >
-        <Zap className={iconSize} strokeWidth={2.25} />
-        <span className="font-pixel-title text-[8px] leading-none mt-0.5">Y</span>
+        <Zap className={abxyIconSize} strokeWidth={2.25} />
+        <span className="font-pixel-title text-[6px] sm:text-[8px] leading-none mt-0.5">Y</span>
       </button>
-      <div className="w-2.5 h-2.5 rounded-full bg-white/15 border border-white/25" />
+      <div className="w-2 h-2 rounded-full bg-white/15 border border-white/25" />
       <button
         type="button"
         data-btn="A"
         aria-label={isStagePlaying ? 'A Attack Sword' : 'A OK Select'}
         tabIndex={-1}
         {...abxyProps('A')}
-        className={`${sizeClass} rounded-full ${transparentWhiteBtn}`}
+        className={`${abxyBtnSize} rounded-full ${transparentWhiteBtn}`}
       >
-        <Sword className={iconSize} strokeWidth={2.25} />
-        <span className="font-pixel-title text-[8px] leading-none mt-0.5">A</span>
+        <Sword className={abxyIconSize} strokeWidth={2.25} />
+        <span className="font-pixel-title text-[6px] sm:text-[8px] leading-none mt-0.5">A</span>
       </button>
 
-      {/* Row 3: B (Jump / Back) at Bottom */}
       <div />
       <button
         type="button"
@@ -186,299 +341,192 @@ export const HandheldShell: React.FC<HandheldShellProps> = ({
         aria-label={isStagePlaying ? 'B Jump' : 'B Back'}
         tabIndex={-1}
         {...abxyProps('B')}
-        className={`${sizeClass} rounded-full ${transparentWhiteBtn}`}
+        className={`${abxyBtnSize} rounded-full ${transparentWhiteBtn}`}
       >
-        <ArrowUp className={iconSize} strokeWidth={2.25} />
-        <span className="font-pixel-title text-[8px] leading-none mt-0.5">B</span>
+        <ArrowUp className={abxyIconSize} strokeWidth={2.25} />
+        <span className="font-pixel-title text-[6px] sm:text-[8px] leading-none mt-0.5">B</span>
       </button>
       <div />
     </div>
   );
 
-  return (
-    <div className="h-screen w-screen overflow-hidden bg-[#12141f] flex flex-col items-center justify-center p-2 sm:p-4">
-      {/* Retro GBC Handheld Casing */}
-      <div className="w-full max-w-[980px] h-full max-h-[840px] flex flex-col md:flex-row items-center justify-evenly md:justify-center gap-2 md:gap-5 bg-[#23273a] border-4 border-[#3a415e] rounded-2xl p-2.5 sm:p-4 shadow-[0_12px_0_#0b0d14]">
-        {/* Left Handheld Wing (Desktop Turn L/R, D-Pad & Audio/Options) */}
-        {showPad && (
-          <div className="hidden md:flex flex-col items-center justify-center gap-3 w-44 shrink-0">
-            {/* Turn Left / Right Face Buttons (Q/E) */}
-            <div className="flex items-center gap-2">
-              <button
-                type="button"
-                data-btn="TURN_L"
-                aria-label="Turn Left"
-                tabIndex={-1}
-                {...holdBtnProps('turnLeft')}
-                className={`w-14 py-1 rounded ${transparentWhiteBtn}`}
-              >
-                <RotateCcw className="w-3.5 h-3.5" strokeWidth={2.25} />
-                <span className="font-pixel-title text-[7px] mt-0.5">TURN L</span>
-              </button>
-              <button
-                type="button"
-                data-btn="TURN_R"
-                aria-label="Turn Right"
-                tabIndex={-1}
-                {...holdBtnProps('turnRight')}
-                className={`w-14 py-1 rounded ${transparentWhiteBtn}`}
-              >
-                <RotateCw className="w-3.5 h-3.5" strokeWidth={2.25} />
-                <span className="font-pixel-title text-[7px] mt-0.5">TURN R</span>
-              </button>
-            </div>
+  const lBlockBtn = (
+    <button
+      type="button"
+      data-btn="L"
+      aria-label="L Block"
+      tabIndex={-1}
+      {...holdBtnProps('block')}
+      className={`px-2 py-1 rounded ${transparentWhiteBtn}`}
+    >
+      <Shield className="w-3 h-3 sm:w-3.5 sm:h-3.5" strokeWidth={2.25} />
+      <span className="font-pixel-title text-[6px] sm:text-[7px] mt-0.5">L·BLK</span>
+    </button>
+  );
 
-            <div className="text-[9px] font-pixel-title text-white/75 tracking-wider">
-              {isStagePlaying ? 'D-PAD' : 'PILIH MENU'}
-            </div>
-            <div className="grid grid-cols-3 grid-rows-3 gap-1 w-32 h-32">
-              <div />
-              <button
-                type="button"
-                aria-label="D-Pad Up"
-                tabIndex={-1}
-                {...dpadProps('up')}
-                className={`${dpadBtnClass} rounded-t`}
-              >
-                <ArrowUp className="w-4 h-4" strokeWidth={2.5} />
-              </button>
-              <div />
-              <button
-                type="button"
-                aria-label="D-Pad Left"
-                tabIndex={-1}
-                {...dpadProps('left')}
-                className={`${dpadBtnClass} rounded-l`}
-              >
-                <ArrowLeft className="w-4 h-4" strokeWidth={2.5} />
-              </button>
-              <div className="bg-white/10 border border-white/30 flex items-center justify-center">
-                <div className="w-3 h-3 rounded-full bg-white/25" />
-              </div>
-              <button
-                type="button"
-                aria-label="D-Pad Right"
-                tabIndex={-1}
-                {...dpadProps('right')}
-                className={`${dpadBtnClass} rounded-r`}
-              >
-                <ArrowRight className="w-4 h-4" strokeWidth={2.5} />
-              </button>
-              <div />
-              <button
-                type="button"
-                aria-label="D-Pad Down"
-                tabIndex={-1}
-                {...dpadProps('down')}
-                className={`${dpadBtnClass} rounded-b`}
-              >
-                <ArrowDown className="w-4 h-4" strokeWidth={2.5} />
-              </button>
-              <div />
-            </div>
+  const turnBtn = (
+    <button
+      type="button"
+      data-btn="TURN"
+      aria-label="Balik Badan"
+      tabIndex={-1}
+      {...holdBtnProps('turnFlip')}
+      className={`px-2 py-1 rounded ${transparentWhiteBtn}`}
+    >
+      <RefreshCw className="w-3 h-3 sm:w-3.5 sm:h-3.5" strokeWidth={2.25} />
+      <span className="font-pixel-title text-[6px] sm:text-[7px] mt-0.5">BALIK</span>
+    </button>
+  );
 
-            <div className="flex items-center gap-2">
+  const rHookBtn = (
+    <button
+      type="button"
+      data-btn="R"
+      aria-label="R Grappling Hook"
+      tabIndex={-1}
+      {...grappleBtnProps}
+      className={`px-2.5 py-1 rounded touch-none ${transparentWhiteBtn}`}
+    >
+      <Anchor className="w-3 h-3 sm:w-3.5 sm:h-3.5" strokeWidth={2.25} />
+      <span className="font-pixel-title text-[6px] sm:text-[7px] mt-0.5">R·HOOK</span>
+    </button>
+  );
+
+  const startBtn = (
+    <button
+      type="button"
+      data-btn="START"
+      aria-label={isStagePlaying ? 'Start Pause Menu' : 'Start OK'}
+      onClick={onStart}
+      tabIndex={-1}
+      onMouseUp={(e) => e.currentTarget.blur()}
+      className="px-2 sm:px-3 py-1.5 bg-white/10 hover:bg-white/20 active:bg-white/35 border-2 border-white/60 rounded-full text-[6px] sm:text-[8px] font-pixel-title text-white cursor-pointer tracking-wider"
+    >
+      START
+    </button>
+  );
+
+  const potionBtn = (
+    <button
+      type="button"
+      data-btn="POTION"
+      aria-label="Use HP Potion"
+      tabIndex={-1}
+      {...holdBtnProps('potion')}
+      className="px-2 sm:px-2.5 py-1.5 bg-white/10 hover:bg-white/20 active:bg-white/35 border-2 border-white/55 rounded text-[6px] sm:text-[8px] font-pixel-title text-white cursor-pointer"
+    >
+      POT
+    </button>
+  );
+
+  const dpadWing = (
+    <div
+      key="dpad-wing"
+      data-wing="dpad"
+      className={`flex flex-col items-center h-full ${alignClass} ${gapClass} w-[104px] sm:w-36 lg:w-44 shrink-0`}
+    >
+      <div className="flex items-center gap-1 sm:gap-1.5 w-full justify-center">
+        {lBlockBtn}
+        {turnBtn}
+      </div>
+      {dpadCross}
+    </div>
+  );
+
+  const abxyWing = (
+    <div
+      key="abxy-wing"
+      data-wing="abxy"
+      className={`flex flex-col items-center h-full ${alignClass} ${gapClass} w-[104px] sm:w-36 lg:w-44 shrink-0`}
+    >
+      {rHookBtn}
+      {abxyDiamond}
+      <div className="flex items-center gap-1 sm:gap-1.5">
+        {startBtn}
+        {potionBtn}
+      </div>
+    </div>
+  );
+
+  const screenBezel = (
+    <div key="center-screen" className="flex flex-col items-center justify-center shrink-0">
+      <div className="bg-[#0d1018] border-2 sm:border-4 border-[#171b26] rounded-xl p-1.5 sm:p-2.5 shadow-inner flex flex-col items-center">
+        <div className="w-full flex items-center justify-between px-1 pb-1 text-[8px] sm:text-[9px] text-[#94a3b8]">
+          <span className="font-pixel-title tracking-wider text-[#cbd5e1]">GBC 1:1</span>
+          <div className="flex items-center gap-1">
+            {isStagePlaying && (
               <button
                 type="button"
-                aria-label={muted ? 'Unmute Audio' : 'Mute Audio'}
-                onClick={onToggleMute}
+                aria-label="Pause Game"
+                onClick={onPause}
                 tabIndex={-1}
-                onMouseUp={(e) => e.currentTarget.blur()}
-                className="w-10 h-10 bg-white/10 hover:bg-white/20 border-2 border-white/50 rounded flex items-center justify-center text-white cursor-pointer"
+                className="px-1.5 py-0.5 bg-[#1e293b] hover:bg-[#334155] border border-[#475569] text-[7px] sm:text-[8px] text-white flex items-center gap-1 cursor-pointer"
               >
-                {muted ? <VolumeX className="w-4 h-4 text-[#f87171]" /> : <Volume2 className="w-4 h-4 text-[#4ade80]" />}
+                <Pause className="w-2.5 h-2.5" /> PAUSE
               </button>
-              <button
-                type="button"
-                aria-label="Open Options"
-                onClick={onOptions}
-                tabIndex={-1}
-                onMouseUp={(e) => e.currentTarget.blur()}
-                className="w-10 h-10 bg-white/10 hover:bg-white/20 border-2 border-white/50 rounded flex items-center justify-center text-white cursor-pointer"
-              >
-                <Settings className="w-4 h-4" />
-              </button>
-            </div>
-          </div>
-        )}
-
-        {/* Center 1:1 Square Game Boy Color LCD Screen Bezel */}
-        <div className="flex flex-col items-center justify-center shrink-0">
-          <div className="bg-[#0d1018] border-4 border-[#171b26] rounded-xl p-2 sm:p-3 shadow-inner flex flex-col items-center">
-            <div className="w-full flex items-center justify-between px-1 pb-1.5 text-[9px] text-[#94a3b8]">
-              <span className="font-pixel-title tracking-wider text-[#cbd5e1]">COLOR-LCD 1:1</span>
-              <div className="flex items-center gap-1.5">
-                {isStagePlaying && (
-                  <button
-                    type="button"
-                    aria-label="Pause Game"
-                    onClick={onPause}
-                    tabIndex={-1}
-                    className="px-2 py-0.5 bg-[#1e293b] hover:bg-[#334155] border border-[#475569] text-[8px] text-white flex items-center gap-1 cursor-pointer"
-                  >
-                    <Pause className="w-2.5 h-2.5" /> PAUSE
-                  </button>
-                )}
-                <button
-                  type="button"
-                  aria-label="Toggle Mute"
-                  onClick={onToggleMute}
-                  tabIndex={-1}
-                  className="md:hidden px-1.5 py-0.5 bg-[#1e293b] border border-[#475569] text-[8px] text-white"
-                >
-                  {muted ? 'MUTE' : 'SFX'}
-                </button>
-                <button
-                  type="button"
-                  aria-label="Options"
-                  onClick={onOptions}
-                  tabIndex={-1}
-                  className="md:hidden px-1.5 py-0.5 bg-[#1e293b] border border-[#475569] text-[8px] text-white"
-                >
-                  OPT
-                </button>
-              </div>
-            </div>
-
-            {/* 1:1 Square Playfield Screen */}
-            <div className="relative aspect-square w-[min(86vw,380px)] md:w-[min(68vh,512px)] bg-[#080c14] border-2 border-[#2a334d] overflow-hidden">
-              {children}
-            </div>
+            )}
           </div>
         </div>
 
-        {/* Right Handheld Wing (Desktop Transparent-White ABXY + START + Potion) */}
-        {showPad && (
-          <div className="hidden md:flex flex-col items-center justify-center gap-3 w-44 shrink-0">
-            <div className="text-[9px] font-pixel-title text-white/75 tracking-wider">ABXY PAD</div>
-            {renderAbxyDiamond('w-12 h-12', 'w-4 h-4')}
-            <div className="text-[8px] text-white/70 text-center leading-tight">
-              {isStagePlaying ? 'A:Atk B:Jmp X:Sht Y:Dsh' : 'A: OK  ·  B: Back'}
-            </div>
-            <div className="flex flex-col gap-1.5 w-32">
-              <button
-                type="button"
-                data-btn="START"
-                aria-label={isStagePlaying ? 'Start Pause Menu' : 'Start OK'}
-                onClick={onStart}
-                tabIndex={-1}
-                onMouseUp={(e) => e.currentTarget.blur()}
-                className="w-full py-1.5 bg-white/10 hover:bg-white/20 active:bg-white/35 border-2 border-white/60 rounded-full text-[8px] font-pixel-title text-white cursor-pointer tracking-wider"
-              >
-                START {isStagePlaying ? '(PAUSE)' : ''}
-              </button>
-              <button
-                type="button"
-                aria-label="Use HP Potion"
-                tabIndex={-1}
-                {...holdBtnProps('potion')}
-                className="w-full py-1.5 bg-white/10 hover:bg-white/20 active:bg-white/35 border-2 border-white/55 rounded text-[8px] font-pixel-title text-white cursor-pointer"
-              >
-                POTION [H]
-              </button>
-            </div>
-          </div>
-        )}
+        {/* Strict 1:1 Square Playfield Screen */}
+        <div
+          data-testid="square-lcd"
+          className={`relative aspect-square bg-[#080c14] border-2 border-[#2a334d] overflow-hidden ${
+            isPortrait ? 'w-[min(86vw,44vh,400px)]' : 'w-[min(68vh,45vw,512px)]'
+          }`}
+        >
+          {children}
+        </div>
+      </div>
+    </div>
+  );
 
-        {/* Android / Mobile Portrait Touch Controls Bar */}
-        {showPad && (
-          <div className="flex md:hidden w-full items-center justify-between px-1 pt-1 gap-1.5 flex-1 max-h-[220px]">
-            {/* Mobile D-Pad */}
-            <div className="grid grid-cols-3 grid-rows-3 gap-1 w-32 h-32 shrink-0 touch-none">
-              <div />
-              <button
-                type="button"
-                aria-label="D-Pad Up"
-                tabIndex={-1}
-                {...dpadProps('up')}
-                className={`min-w-[40px] min-h-[40px] rounded-t ${dpadBtnClass}`}
-              >
-                <ArrowUp className="w-4 h-4" strokeWidth={2.5} />
-              </button>
-              <div />
-              <button
-                type="button"
-                aria-label="D-Pad Left"
-                tabIndex={-1}
-                {...dpadProps('left')}
-                className={`min-w-[40px] min-h-[40px] rounded-l ${dpadBtnClass}`}
-              >
-                <ArrowLeft className="w-4 h-4" strokeWidth={2.5} />
-              </button>
-              <div className="bg-white/10 border border-white/30" />
-              <button
-                type="button"
-                aria-label="D-Pad Right"
-                tabIndex={-1}
-                {...dpadProps('right')}
-                className={`min-w-[40px] min-h-[40px] rounded-r ${dpadBtnClass}`}
-              >
-                <ArrowRight className="w-4 h-4" strokeWidth={2.5} />
-              </button>
-              <div />
-              <button
-                type="button"
-                aria-label="D-Pad Down"
-                tabIndex={-1}
-                {...dpadProps('down')}
-                className={`min-w-[40px] min-h-[40px] rounded-b ${dpadBtnClass}`}
-              >
-                <ArrowDown className="w-4 h-4" strokeWidth={2.5} />
-              </button>
-              <div />
-            </div>
+  const portraitControlsDeck = (
+    <div
+      data-testid="portrait-controls"
+      className="w-full flex-1 min-h-0 flex flex-col items-center justify-evenly gap-2 px-1 pb-1"
+    >
+      {/* Clean single-row Shoulder & Utility Buttons (no overlapping) */}
+      <div className="w-full max-w-[360px] flex items-center justify-between gap-1.5">
+        {lBlockBtn}
+        {turnBtn}
+        {startBtn}
+        {potionBtn}
+        {rHookBtn}
+      </div>
 
-            {/* Center START, Turn L/R & Potion */}
-            <div className="flex flex-col items-center gap-1.5 shrink-0">
-              <div className="flex items-center gap-1">
-                <button
-                  type="button"
-                  aria-label="Turn Left"
-                  tabIndex={-1}
-                  {...holdBtnProps('turnLeft')}
-                  className="w-9 h-9 bg-white/10 active:bg-white/35 border-2 border-white/60 rounded flex items-center justify-center text-white"
-                >
-                  <RotateCcw className="w-3.5 h-3.5" strokeWidth={2.25} />
-                </button>
-                <button
-                  type="button"
-                  aria-label="Turn Right"
-                  tabIndex={-1}
-                  {...holdBtnProps('turnRight')}
-                  className="w-9 h-9 bg-white/10 active:bg-white/35 border-2 border-white/60 rounded flex items-center justify-center text-white"
-                >
-                  <RotateCw className="w-3.5 h-3.5" strokeWidth={2.25} />
-                </button>
-              </div>
-              <button
-                type="button"
-                data-btn="START"
-                aria-label={isStagePlaying ? 'Start Pause' : 'Start OK'}
-                onClick={onStart}
-                tabIndex={-1}
-                className="min-h-[34px] px-2.5 bg-white/10 active:bg-white/35 border-2 border-white/60 rounded-full text-[7px] font-pixel-title text-white tracking-wider"
-              >
-                START
-              </button>
-              <button
-                type="button"
-                aria-label="Drink Potion"
-                tabIndex={-1}
-                {...holdBtnProps('potion')}
-                className="min-h-[34px] px-2.5 bg-white/10 active:bg-white/35 border-2 border-white/55 rounded text-[7px] font-pixel-title text-white"
-              >
-                POT
-              </button>
-            </div>
+      {/* Main Action Controls (D-Pad + ABXY Side-by-Side) */}
+      <div className="w-full max-w-[360px] flex items-center justify-between gap-3 px-1">
+        {buttonLayout.swapHands ? abxyDiamond : dpadCross}
+        {buttonLayout.swapHands ? dpadCross : abxyDiamond}
+      </div>
+    </div>
+  );
 
-            {/* Mobile ABXY Diamond (>= 44px touch targets) */}
-            <div className="shrink-0">
-              {renderAbxyDiamond('w-11 h-11', 'w-3.5 h-3.5')}
-            </div>
-          </div>
+  return (
+    <div className="h-screen w-screen overflow-hidden bg-[#12141f] flex items-center justify-center p-1 sm:p-3">
+      <div
+        data-testid="handheld-shell"
+        data-orientation={isPortrait ? 'portrait' : 'landscape'}
+        className={
+          isPortrait
+            ? 'w-full max-w-[460px] h-full max-h-[860px] flex flex-col items-center justify-between gap-2 bg-[#23273a] border-4 border-[#3a415e] rounded-2xl p-2 shadow-[0_10px_0_#0b0d14]'
+            : 'w-full max-w-[1040px] h-full max-h-[680px] flex flex-row items-center justify-between sm:justify-center gap-1 sm:gap-4 bg-[#23273a] border-4 border-[#3a415e] rounded-2xl p-1.5 sm:p-4 shadow-[0_10px_0_#0b0d14]'
+        }
+      >
+        {isPortrait ? (
+          <>
+            {screenBezel}
+            {showPad ? portraitControlsDeck : null}
+          </>
+        ) : (
+          <>
+            {showPad ? (buttonLayout.swapHands ? abxyWing : dpadWing) : null}
+            {screenBezel}
+            {showPad ? (buttonLayout.swapHands ? dpadWing : abxyWing) : null}
+          </>
         )}
       </div>
     </div>
   );
 };
-

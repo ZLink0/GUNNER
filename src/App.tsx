@@ -399,11 +399,12 @@ export default function App() {
   return (
     <HandheldShell
       touchMode={settings.touchMode}
-      muted={settings.muted}
+      buttonLayout={settings.buttonLayout}
       isStagePlaying={isStagePlaying}
       onVirtualButton={handleVirtualButton}
+      onGrappleAimPreview={(ang) => engineRef.current?.setGrappleAimPreview(ang)}
+      onGrappleFire={(ang) => engineRef.current?.fireGrappleWithAngle(ang)}
       onMenuNav={handleMenuNav}
-      onToggleMute={() => setSettings((s) => ({ ...s, muted: !s.muted }))}
       onPause={() => {
         if (subMode === 'stage' && phase === 'playing') {
           engineRef.current?.setPaused(true);
@@ -411,7 +412,6 @@ export default function App() {
         }
       }}
       onStart={handleStartButton}
-      onOptions={() => setShowOptions(true)}
     >
       {/* Persistent 1:1 GBC Pixel Canvas */}
       <div ref={screenRef} className={`w-full h-full relative ${paletteFilterClass}`}>
@@ -421,19 +421,23 @@ export default function App() {
           tabIndex={0}
           width={CANVAS_SIZE}
           height={CANVAS_SIZE}
+          onPointerMove={(e) => {
+            if (!isStagePlaying) return;
+            const rect = e.currentTarget.getBoundingClientRect();
+            if (rect.width <= 0 || rect.height <= 0) return;
+            const nx = (e.clientX - rect.left) / rect.width;
+            const ny = (e.clientY - rect.top) / rect.height;
+            engineRef.current?.setPointerAim(nx, ny);
+          }}
+          onPointerLeave={() => {
+            engineRef.current?.setPointerAim(null, null);
+          }}
           className="w-full h-full block pixelated outline-none"
         />
 
         {/* Subtle LCD scanline grid when LCD Grid palette is selected */}
         {settings.palette === 'lcd' && (
-          <div
-            className="pointer-events-none absolute inset-0 opacity-20"
-            style={{
-              backgroundImage:
-                'linear-gradient(to right, rgba(0,0,0,0.4) 1px, transparent 1px), linear-gradient(to bottom, rgba(0,0,0,0.4) 1px, transparent 1px)',
-              backgroundSize: '4px 4px',
-            }}
-          />
+          <div className="pointer-events-none absolute inset-0 opacity-20 bg-[linear-gradient(to_right,rgba(0,0,0,0.4)_1px,transparent_1px),linear-gradient(to_bottom,rgba(0,0,0,0.4)_1px,transparent_1px)] bg-[length:4px_4px]" />
         )}
 
         {!spritesReady && (
@@ -476,6 +480,7 @@ export default function App() {
               engineRef.current?.setPaused(false);
               setPhase('playing');
             }}
+            onOptions={() => setShowOptions(true)}
             onRestart={() => enterStage(activeStage)}
             onHub={() => {
               engineRef.current?.setPaused(false);

@@ -113,12 +113,33 @@ export interface QuestDef {
   rewardSwordId?: SwordId;
 }
 
+export type GrappleId = 'iron_grapple' | 'plasma_grapple';
+
+export interface GrappleDef {
+  id: GrappleId;
+  spriteIndex: number; // col in gear.png row 1 (4..5)
+  name: string;
+  rangePx: number;
+  pullSpeed: number;
+  effectLabel: string;
+  craftCost?: { gold: number; materials: number; crystals: number };
+}
+
+export interface ButtonLayoutConfig {
+  preset: 'standard' | 'compact' | 'wide';
+  swapHands: boolean;
+  buttonScale: 0.85 | 1 | 1.15;
+  verticalAlign: 'top' | 'center' | 'bottom';
+  gapSize: 'tight' | 'normal' | 'wide';
+}
+
 export interface GameSettings {
   muted: boolean;
   volume: number; // 0..1
   palette: ScreenPalette;
   gameSpeed: 0.85 | 1 | 1.2;
   touchMode: TouchMode;
+  buttonLayout: ButtonLayoutConfig;
 }
 
 export interface SaveState {
@@ -143,6 +164,9 @@ export interface SaveState {
   ownedArmors: string[];
   armorUpgrades: Partial<Record<string, number>>; // +0..+10
   equippedArmor: string;
+  ownedGrapples: GrappleId[];
+  grappleUpgrades: Partial<Record<GrappleId, number>>; // +0..+10
+  equippedGrapple: GrappleId;
   ownedAccessories: string[];
   equippedAccessory: string | null;
   claimedQuests: string[];
@@ -510,6 +534,26 @@ export const ACCESSORIES: AccessoryDef[] = [
   { id: 'dash_boots', spriteIndex: 3, name: 'Wind Boots', atkBonus: 4, critBonus: 0.05, ammoBonus: 0, speedBonus: 0.15, price: 680, effectText: '+15% Move Speed, +4 ATK' },
 ];
 
+export const GRAPPLE_HOOKS: GrappleDef[] = [
+  {
+    id: 'iron_grapple',
+    spriteIndex: 4,
+    name: 'Iron Grapple',
+    rangePx: 120,
+    pullSpeed: 320,
+    effectLabel: 'Hook 7.5 Blok · Aktivasi Tuas',
+  },
+  {
+    id: 'plasma_grapple',
+    spriteIndex: 5,
+    name: 'Plasma Grapple',
+    rangePx: 168,
+    pullSpeed: 400,
+    effectLabel: 'Hook 10.5 Blok · Fast Pull',
+    craftCost: { gold: 420, materials: 6, crystals: 45 },
+  },
+];
+
 export const QUESTS: QuestDef[] = [
   {
     id: 'q_main_1',
@@ -630,7 +674,8 @@ export type HeroAnimName =
   | 'climb'
   | 'hangClimb'
   | 'dash'
-  | 'potion';
+  | 'potion'
+  | 'block';
 
 export type DropKind =
   | 'ammo_small'

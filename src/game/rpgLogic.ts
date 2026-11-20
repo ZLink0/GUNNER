@@ -2,9 +2,13 @@ import {
   ACCESSORIES,
   ARMORS,
   ArmorDef,
+  ButtonLayoutConfig,
   DropKind,
+  GRAPPLE_HOOKS,
   GUNS,
   GameSettings,
+  GrappleDef,
+  GrappleId,
   GunDef,
   GunId,
   MAX_HP_POTIONS,
@@ -53,6 +57,9 @@ export function createDefaultSave(): SaveState {
     ownedArmors: ['adventurer_vest'],
     armorUpgrades: { adventurer_vest: 0 },
     equippedArmor: 'adventurer_vest',
+    ownedGrapples: ['iron_grapple'],
+    grappleUpgrades: { iron_grapple: 0 },
+    equippedGrapple: 'iron_grapple',
     ownedAccessories: [],
     equippedAccessory: null,
     claimedQuests: [],
@@ -66,6 +73,16 @@ export function createDefaultSave(): SaveState {
   };
 }
 
+export function createDefaultButtonLayout(): ButtonLayoutConfig {
+  return {
+    preset: 'standard',
+    swapHands: false,
+    buttonScale: 1,
+    verticalAlign: 'center',
+    gapSize: 'normal',
+  };
+}
+
 export function createDefaultSettings(): GameSettings {
   return {
     muted: false,
@@ -73,6 +90,7 @@ export function createDefaultSettings(): GameSettings {
     palette: 'vivid',
     gameSpeed: 1,
     touchMode: 'auto',
+    buttonLayout: createDefaultButtonLayout(),
   };
 }
 
@@ -86,6 +104,10 @@ export function getGunDef(id: GunId): GunDef {
 
 export function getArmorDef(id: string): ArmorDef {
   return ARMORS.find((a) => a.id === id) ?? ARMORS[0];
+}
+
+export function getGrappleDef(id: GrappleId): GrappleDef {
+  return GRAPPLE_HOOKS.find((g) => g.id === id) ?? GRAPPLE_HOOKS[0];
 }
 
 export function getExpForNextLevel(level: number): number {
@@ -203,6 +225,93 @@ export function calculateAttackDamage(params: {
     damage: Math.max(1, Math.round(mitigated * critMult)),
     isCrit,
   };
+}
+
+export interface CombatHitResult {
+  missed: boolean;
+  damage: number;
+  isCrit: boolean;
+  stunned: boolean;
+}
+
+/**
+ * Shared Miss / Critical / Stun combat resolution for both Hero and Enemies.
+ */
+export function resolveCombatHit(params: {
+  rawAtk: number;
+  targetDef?: number;
+  critRate: number;
+  missChance: number;
+  stunChance: number;
+  rngHit: number;
+  rngCrit: number;
+  rngStun: number;
+  multiplier?: number;
+  isBossTarget?: boolean;
+  swordId?: SwordId;
+}): CombatHitResult {
+  const {
+    rawAtk,
+    targetDef = 0,
+    critRate,
+    missChance,
+    stunChance,
+    rngHit,
+    rngCrit,
+    rngStun,
+    multiplier = 1,
+    isBossTarget = false,
+    swordId,
+  } = params;
+
+  if (rngHit < missChance) {
+    return { missed: true, damage: 0, isCrit: false, stunned: false };
+  }
+
+  let bonus = 1;
+  if (isBossTarget && swordId === 'dragon_slayer') bonus = 1.5;
+  else if (isBossTarget && swordId === 'holy_sword') bonus = 1.35;
+
+  const isCrit = rngCrit < critRate;
+  const critMult = isCrit ? 1.75 : 1;
+  const mitigated = Math.max(2, rawAtk * multiplier * bonus - targetDef * 0.45);
+  const stunned = rngStun < stunChance;
+
+  return {
+    missed: false,
+    damage: Math.max(1, Math.round(mitigated * critMult)),
+    isCrit,
+    stunned,
+  };
+}
+
+/**
+ * Charged Sword Slash (Hold A & release): 30% chance to inflict Stun.
+ */
+export function rollChargedSlashStun(rngValue: number): boolean {
+  return rngValue < 0.30;
+}
+
+/**
+ * Charged Gun Shot (Hold X & release): adds +64px (+4 blocks >= 3+ blocks) to finite range.
+ */
+export function computeChargedGunRange(baseRangePx: number | null): number | null {
+  if (baseRangePx === null) return null;
+  return baseRangePx + 64;
+}
+
+export function computeChargedGunDamage(baseDamage: number): number {
+  return Math.max(2, Math.round(baseDamage * 1.9));
+}
+
+/**
+ * Incoming damage calculation when hero is standing vs blocking (L button).
+ * Blocking reduces incoming damage by 55% but ALWAYS inflicts >= 1 HP damage ("tetap kena damage").
+ */
+export function computeBlockedDamage(rawDmg: number, def: number, isBlocking: boolean): number {
+  const unblocked = Math.max(2, Math.round(rawDmg - def * 0.35));
+  if (!isBlocking) return unblocked;
+  return Math.max(1, Math.round(unblocked * 0.45));
 }
 
 export function consumeAmmo(currentAmmo: number, amount = 1): { ok: boolean; nextAmmo: number } {
@@ -429,6 +538,55 @@ export function upgradeArmor(save: SaveState, armorId: string): { ok: boolean; n
   };
 }
 
+export function craftGrapple(save: SaveState, grappleId: GrappleId): { ok: boolean; next: SaveState; message: string } {
+  if (save.ownedGrapples?.includes(grappleId)) {
+    return { ok: false, next: save, message: 'Already owned' };
+  }
+  const def = GRAPPLE_HOOKS.find((g) => g.id === grappleId);
+  if (!def || !def.craftCost) return { ok: false, next: save, message: 'Cannot be forged' };
+  const { gold, materials, crystals } = def.craftCost;
+  if (save.gold < gold || save.weaponMaterials < materials || save.rareCrystals < crystals) {
+    return { ok: false, next: save, message: `Need ${gold}G, ${materials} Iron, ${crystals} CR` };
+  }
+  return {
+    ok: true,
+    next: {
+      ...save,
+      gold: save.gold - gold,
+      weaponMaterials: save.weaponMaterials - materials,
+      rareCrystals: save.rareCrystals - crystals,
+      ownedGrapples: [...(save.ownedGrapples ?? ['iron_grapple']), grappleId],
+      grappleUpgrades: { ...(save.grappleUpgrades ?? {}), [grappleId]: 0 },
+      equippedGrapple: grappleId,
+    },
+    message: `Forged ${def.name}!`,
+  };
+}
+
+export function upgradeGrapple(save: SaveState, grappleId: GrappleId): { ok: boolean; next: SaveState; message: string } {
+  if (!save.ownedGrapples?.includes(grappleId)) {
+    return { ok: false, next: save, message: 'Grapple not owned' };
+  }
+  const cur = save.grappleUpgrades?.[grappleId] ?? 0;
+  if (cur >= 10) return { ok: false, next: save, message: 'Max +10 reached' };
+  const cost = getSwordUpgradeCost(cur);
+  if (save.gold < cost.gold || save.weaponMaterials < cost.materials || save.rareCrystals < cost.crystals) {
+    return { ok: false, next: save, message: 'Not enough Gold/Iron/Crystal' };
+  }
+  return {
+    ok: true,
+    next: {
+      ...save,
+      gold: save.gold - cost.gold,
+      weaponMaterials: save.weaponMaterials - cost.materials,
+      rareCrystals: save.rareCrystals - cost.crystals,
+      grappleUpgrades: { ...(save.grappleUpgrades ?? {}), [grappleId]: cur + 1 },
+      stats: { ...save.stats, swordsUpgraded: save.stats.swordsUpgraded + 1 },
+    },
+    message: `${getGrappleDef(grappleId).name} +${cur + 1}!`,
+  };
+}
+
 // Shop ONLY sells consumables, ammo upgrades, and accessories (Weapons & Armor are Blacksmith-only)
 export function buyShopItem(
   save: SaveState,
@@ -559,6 +717,9 @@ export function loadSaveState(): SaveState | null {
       gunUpgrades: parsed.gunUpgrades ?? def.gunUpgrades,
       equippedGun: parsed.equippedGun ?? def.equippedGun,
       armorUpgrades: parsed.armorUpgrades ?? def.armorUpgrades,
+      ownedGrapples: parsed.ownedGrapples?.length ? parsed.ownedGrapples : def.ownedGrapples,
+      grappleUpgrades: parsed.grappleUpgrades ?? def.grappleUpgrades,
+      equippedGrapple: parsed.equippedGrapple ?? def.equippedGrapple,
     };
   } catch {
     return null;
@@ -577,7 +738,16 @@ export function loadSettings(): GameSettings {
   try {
     const raw = localStorage.getItem(SETTINGS_STORAGE_KEY);
     if (!raw) return createDefaultSettings();
-    return { ...createDefaultSettings(), ...(JSON.parse(raw) as Partial<GameSettings>) };
+    const parsed = JSON.parse(raw) as Partial<GameSettings>;
+    const def = createDefaultSettings();
+    return {
+      ...def,
+      ...parsed,
+      buttonLayout: {
+        ...def.buttonLayout,
+        ...(parsed.buttonLayout ?? {}),
+      },
+    };
   } catch {
     return createDefaultSettings();
   }

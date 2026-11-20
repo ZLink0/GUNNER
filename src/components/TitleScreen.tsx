@@ -121,7 +121,7 @@ export const TitleScreen: React.FC<TitleScreenProps> = ({
 
       {/* Flat bottom control hint line */}
       <div className="text-center text-[8px] sm:text-[9px] text-[#e2e8f0] bg-[#090d16]/75 px-2 py-1 rounded border border-[#1e293b]">
-        Menu: D-Pad · A OK · B Back | Stage: A Atk · B Jmp · X Sht · Y Dsh · Q/E Turn · START Pause
+        Hold A/X: Charge Skill · Y+Back: Dodge · R: 360° Hook · L: Block · Q: Balik
       </div>
     </div>
   );

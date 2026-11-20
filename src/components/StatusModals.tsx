@@ -5,6 +5,7 @@ import { RunSummary } from '../game/types';
 interface PauseModalProps {
   stage: number;
   onResume: () => void;
+  onOptions: () => void;
   onRestart: () => void;
   onHub: () => void;
   onTitle: () => void;
@@ -13,6 +14,7 @@ interface PauseModalProps {
 export const PauseModal: React.FC<PauseModalProps> = ({
   stage,
   onResume,
+  onOptions,
   onRestart,
   onHub,
   onTitle,
@@ -40,6 +42,14 @@ export const PauseModal: React.FC<PauseModalProps> = ({
             className="w-full py-2 bg-[#1d4ed8] hover:bg-[#2563eb] border-2 border-[#facc15] font-pixel-title text-[10px] text-white cursor-pointer"
           >
             Resume
+          </button>
+          <button
+            type="button"
+            data-testid="pause-option-btn"
+            onClick={onOptions}
+            className="w-full py-1.5 bg-[#1e293b] hover:bg-[#334155] border border-[#38bdf8] text-[10px] text-[#38bdf8] cursor-pointer font-bold"
+          >
+            Option
           </button>
           <button
             type="button"
