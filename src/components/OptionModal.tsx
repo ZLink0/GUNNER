@@ -162,8 +162,8 @@ export const OptionModal: React.FC<OptionModalProps> = ({
 
           {/* Controls Summary */}
           <div className="border-t border-[#1e293b] pt-2 text-[9px] text-[#94a3b8] leading-relaxed">
-            <div>Pad: A Attack/OK · B Jump/Back · X Shoot · Y Dash</div>
-            <div>Key: WASD/Arrows · J/Z Atk · Space/C Jmp · K/X Gun · Shift/L Dash</div>
+            <div>Pad: A Atk/OK · B Jmp/Back · X Shoot · Y Dash · START Pause</div>
+            <div>Key: WASD/Arr · Q/E Turn L/R · J/Z Atk · Space Jmp · K/X Gun</div>
           </div>
 
           {onResetSave && (

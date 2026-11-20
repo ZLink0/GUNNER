@@ -38,8 +38,8 @@ function encodePNG(width, height, rgba) {
   const ihdr = Buffer.alloc(13);
   ihdr.writeUInt32BE(width, 0);
   ihdr.writeUInt32BE(height, 4);
-  ihdr[8] = 8; // bit depth
-  ihdr[9] = 6; // RGBA
+  ihdr[8] = 8;
+  ihdr[9] = 6;
   ihdr[10] = 0;
   ihdr[11] = 0;
   ihdr[12] = 0;
@@ -47,7 +47,7 @@ function encodePNG(width, height, rgba) {
   const stride = width * 4 + 1;
   const raw = Buffer.alloc(stride * height);
   for (let y = 0; y < height; y++) {
-    raw[y * stride] = 0; // filter None
+    raw[y * stride] = 0;
     rgba.copy(raw, y * stride + 1, y * width * 4, (y + 1) * width * 4);
   }
   const compressed = zlib.deflateSync(raw, { level: 9 });
@@ -124,18 +124,6 @@ class PixelSurface {
     }
   }
 
-  drawPattern(ox, oy, pattern, palette) {
-    for (let y = 0; y < pattern.length; y++) {
-      const row = pattern[y];
-      for (let x = 0; x < row.length; x++) {
-        const ch = row[x];
-        if (ch !== '.' && palette[ch]) {
-          this.set(ox + x, oy + y, palette[ch]);
-        }
-      }
-    }
-  }
-
   save(filename) {
     const outPath = path.join(OUT_DIR, filename);
     fs.writeFileSync(outPath, encodePNG(this.w, this.h, this.buf));
@@ -143,32 +131,33 @@ class PixelSurface {
   }
 }
 
-// ---- 1. HERO SPRITE SHEET (192 x 544 -> 6 cols x 17 rows of 32x32) ----
+// ---- 1. HERO SPRITE SHEET (192 x 576 -> 6 cols x 18 rows of 32x32) ----
+// Row 17 = hangClimb (4 frames: hand-over-hand monkey bar / overhead bar hanging)
 const HERO_PAL = {
-  O: '#0f111a', // outline
-  H1: '#1d4ed8', // blue hair shadow
-  H2: '#3b82f6', // blue hair mid
-  H3: '#93c5fd', // blue hair highlight
-  S1: '#e0a97d', // skin shadow
-  S2: '#fcd5b5', // skin light
-  E: '#0f172a', // eyes
-  EW: '#ffffff', // eye shine
-  B1: '#b91c1c', // headband/scarf dark
-  B2: '#ef4444', // headband/scarf bright
-  T1: '#0f766e', // adventurer tunic shadow
-  T2: '#14b8a6', // adventurer tunic mid
-  T3: '#5eead4', // tunic highlight
-  L1: '#451a03', // leather belt/boots shadow
-  L2: '#92400e', // leather boots/gloves
-  G1: '#eab308', // gold buckle/crest
-  P1: '#475569', // gun metal dark
-  P2: '#94a3b8', // gun metal light
-  P3: '#38bdf8', // buster energy core
-  W1: '#cbd5e1', // blade light
-  W2: '#ffffff', // blade gleam
-  FX1: '#fef08a', // muzzle/slash flash
-  FX2: '#38bdf8', // energy flash
-  POT1: '#22c55e', // potion green
+  O: '#0f111a',
+  H1: '#1d4ed8',
+  H2: '#3b82f6',
+  H3: '#93c5fd',
+  S1: '#e0a97d',
+  S2: '#fcd5b5',
+  E: '#0f172a',
+  EW: '#ffffff',
+  B1: '#b91c1c',
+  B2: '#ef4444',
+  T1: '#0f766e',
+  T2: '#14b8a6',
+  T3: '#5eead4',
+  L1: '#451a03',
+  L2: '#92400e',
+  G1: '#eab308',
+  P1: '#475569',
+  P2: '#94a3b8',
+  P3: '#38bdf8',
+  W1: '#cbd5e1',
+  W2: '#ffffff',
+  FX1: '#fef08a',
+  FX2: '#38bdf8',
+  POT1: '#22c55e',
   POT2: '#bbf7d0',
 };
 
@@ -180,11 +169,12 @@ function drawHeroFrame(surf, col, row, opts = {}) {
     leanX = 0,
     squashY = 0,
     scarfWave = 0,
-    legMode = 'idle', // idle, walk0..3, run0..5, jump, fall, land, climb0..3, dash, hurt, dead0..4
-    armMode = 'buster', // buster, shoot, shootUp, shootDown, swordWind, swordSwing, swordUp, swordSpin, climb0..1, hurt, potion0..3
+    legMode = 'idle',
+    armMode = 'buster',
     muzzle = false,
     swordFrame = -1,
     climbFrame = -1,
+    hangFrame = -1,
     deadFrame = -1,
     hurtFlash = false,
   } = opts;
@@ -195,7 +185,6 @@ function drawHeroFrame(surf, col, row, opts = {}) {
       return;
     }
     if (deadFrame === 1) {
-      // falling to knees
       surf.rect(ox + 10, oy + 14, 12, 10, HERO_PAL.O);
       surf.rect(ox + 11, oy + 15, 10, 8, HERO_PAL.T1);
       surf.rect(ox + 11, oy + 8, 10, 7, HERO_PAL.H2);
@@ -205,14 +194,12 @@ function drawHeroFrame(surf, col, row, opts = {}) {
       return;
     }
     if (deadFrame === 2) {
-      // collapsed
       surf.rect(ox + 6, oy + 22, 20, 6, HERO_PAL.O);
       surf.rect(ox + 7, oy + 23, 18, 4, HERO_PAL.T1);
       surf.rect(ox + 6, oy + 21, 7, 5, HERO_PAL.H2);
       surf.rect(ox + 20, oy + 23, 5, 4, HERO_PAL.L2);
       return;
     }
-    // frames 3-4: Mega Man style pixel burst orbs
     const spread = deadFrame === 3 ? 6 : 11;
     const pts = [
       [16 - spread, 20], [16 + spread, 20],
@@ -229,11 +216,46 @@ function drawHeroFrame(surf, col, row, opts = {}) {
     return;
   }
 
+  // Dedicated Hand-Over-Hand Hanging Animation ("gerakan tangan bergelantung")
+  if (hangFrame >= 0) {
+    const swing = hangFrame === 1 ? 1 : hangFrame === 3 ? -1 : 0;
+    const cx = ox + 16 + swing;
+    const headY = oy + 8;
+    const bodyTop = oy + 18;
+    // Left arm & Right arm alternating reach up to overhead bar at oy + 2
+    const leftUp = hangFrame === 0 || hangFrame === 1;
+    const rightUp = hangFrame === 2 || hangFrame === 3;
+    // Left arm
+    surf.rect(cx - 6, leftUp ? oy + 2 : oy + 6, 3, leftUp ? 16 : 12, HERO_PAL.O);
+    surf.rect(cx - 5, leftUp ? oy + 3 : oy + 7, 2, leftUp ? 14 : 10, HERO_PAL.L2);
+    surf.rect(cx - 6, leftUp ? oy + 2 : oy + 6, 3, 2, HERO_PAL.S2); // hand gripping bar
+    // Right arm
+    surf.rect(cx + 3, rightUp ? oy + 2 : oy + 6, 3, rightUp ? 16 : 12, HERO_PAL.O);
+    surf.rect(cx + 4, rightUp ? oy + 3 : oy + 7, 2, rightUp ? 14 : 10, HERO_PAL.L2);
+    surf.rect(cx + 3, rightUp ? oy + 2 : oy + 6, 3, 2, HERO_PAL.S2);
+    // Dangling legs
+    surf.rect(cx - 4 + swing, oy + 26, 4, 4, HERO_PAL.O);
+    surf.rect(cx - 3 + swing, oy + 26, 3, 3, HERO_PAL.L2);
+    surf.rect(cx + 1 + swing, oy + 25, 4, 4, HERO_PAL.O);
+    surf.rect(cx + 1 + swing, oy + 25, 3, 3, HERO_PAL.L2);
+    // Torso
+    surf.rect(cx - 5, bodyTop - 1, 10, 9, HERO_PAL.O);
+    surf.rect(cx - 4, bodyTop, 8, 7, HERO_PAL.T2);
+    surf.rect(cx - 4, bodyTop + 5, 8, 2, HERO_PAL.L1);
+    surf.rect(cx - 1, bodyTop + 5, 2, 2, HERO_PAL.G1);
+    // Head & face
+    surf.rect(cx - 5, headY, 10, 9, HERO_PAL.O);
+    surf.rect(cx - 4, headY + 1, 8, 7, HERO_PAL.H2);
+    surf.rect(cx - 4, headY + 3, 8, 2, HERO_PAL.B2);
+    surf.rect(cx - 1, headY + 4, 5, 4, HERO_PAL.S2);
+    surf.rect(cx + 2, headY + 5, 2, 2, HERO_PAL.E);
+    return;
+  }
+
   const cx = ox + 16 + leanX;
-  const baseY = oy + 28; // feet ground line
+  const baseY = oy + 28;
   const bodyTop = oy + 13 + bobY + squashY;
 
-  // Scarf trail behind hero
   const scarfLen = legMode === 'dash' ? 9 : (legMode.startsWith('run') ? 6 : 4);
   for (let i = 0; i < scarfLen; i++) {
     const sy = bodyTop + 1 + Math.round(Math.sin((i + scarfWave) * 0.9) * 1.2);
@@ -243,7 +265,6 @@ function drawHeroFrame(surf, col, row, opts = {}) {
     surf.set(sx, sy + 2, HERO_PAL.O);
   }
 
-  // Legs & Boots
   const drawBoot = (bx, by, w = 4, h = 4) => {
     surf.rect(bx - 1, by - 1, w + 2, h + 1, HERO_PAL.O);
     surf.rect(bx, by, w, h, HERO_PAL.L2);
@@ -269,14 +290,12 @@ function drawHeroFrame(surf, col, row, opts = {}) {
   } else if (legMode === 'dash') {
     drawBoot(cx - 8, baseY - 4, 5, 3);
     drawBoot(cx + 1, baseY - 5, 4, 3);
-    // thruster flame behind boots
     surf.rect(cx - 12, baseY - 4, 3, 2, HERO_PAL.FX2);
     surf.set(cx - 13, baseY - 3, HERO_PAL.W2);
   } else if (legMode === 'hurt') {
     drawBoot(cx - 6, baseY - 5, 4, 4);
     drawBoot(cx + 2, baseY - 3, 4, 4);
   } else {
-    // walk / run cycles
     const phase = parseInt(legMode.replace(/\D/g, ''), 10) || 0;
     const stride = legMode.startsWith('run') ? 4 : 3;
     const angle = (phase / (legMode.startsWith('run') ? 6 : 4)) * Math.PI * 2;
@@ -288,22 +307,17 @@ function drawHeroFrame(surf, col, row, opts = {}) {
     drawBoot(cx - 1 + rx, baseY - 4 + ry, 4, 4);
   }
 
-  // Torso (Adventurer Tunic + Gold Belt)
   const torsoH = 9 - squashY;
   surf.rect(cx - 5, bodyTop - 1, 10, torsoH + 2, HERO_PAL.O);
   surf.rect(cx - 4, bodyTop, 8, torsoH, hurtFlash ? HERO_PAL.W2 : HERO_PAL.T2);
   surf.rect(cx - 4, bodyTop, 3, torsoH, hurtFlash ? HERO_PAL.FX1 : HERO_PAL.T1);
   surf.rect(cx + 1, bodyTop + 1, 2, 3, HERO_PAL.T3);
-  // Belt
   surf.rect(cx - 4, bodyTop + torsoH - 3, 8, 2, HERO_PAL.L1);
   surf.rect(cx - 1, bodyTop + torsoH - 3, 3, 2, HERO_PAL.G1);
 
-  // Head & Spiky Blue Hair
   const headY = bodyTop - 10;
-  // Hair back & spikes
   surf.rect(cx - 6, headY - 1, 12, 10, HERO_PAL.O);
   surf.rect(cx - 5, headY, 10, 8, HERO_PAL.H2);
-  // spiky hair tufts
   surf.rect(cx - 6, headY + 1, 2, 3, HERO_PAL.H1);
   surf.rect(cx - 3, headY - 2, 3, 2, HERO_PAL.H2);
   surf.rect(cx + 1, headY - 2, 4, 2, HERO_PAL.H3);
@@ -312,34 +326,30 @@ function drawHeroFrame(surf, col, row, opts = {}) {
   surf.set(cx + 2, headY - 3, HERO_PAL.O);
 
   if (climbFrame >= 0) {
-    // Back of head + headband tie
     surf.rect(cx - 5, headY + 3, 10, 2, HERO_PAL.B2);
     surf.rect(cx - 1, headY + 5, 2, 3, HERO_PAL.B1);
   } else {
-    // Face
     surf.rect(cx - 1, headY + 3, 6, 6, HERO_PAL.S2);
     surf.rect(cx - 1, headY + 3, 1, 6, HERO_PAL.S1);
-    // Headband
     surf.rect(cx - 5, headY + 2, 10, 2, HERO_PAL.B2);
     surf.rect(cx - 5, headY + 2, 3, 2, HERO_PAL.B1);
-    // Eye
     surf.rect(cx + 2, headY + 4, 2, 3, HERO_PAL.E);
     surf.set(cx + 2, headY + 4, HERO_PAL.EW);
   }
 
-  // Arms, Buster Gun, Potion, or Sword Swing
   if (climbFrame >= 0) {
-    const la = climbFrame % 2 === 0 ? -3 : 0;
-    const ra = climbFrame % 2 === 0 ? 0 : -3;
-    surf.rect(cx - 7, bodyTop + la, 3, 5, HERO_PAL.L2);
-    surf.rect(cx + 4, bodyTop + ra, 3, 5, HERO_PAL.L2);
+    const la = climbFrame % 2 === 0 ? -5 : 0;
+    const ra = climbFrame % 2 === 0 ? 0 : -5;
+    surf.rect(cx - 7, bodyTop + la, 3, 6, HERO_PAL.L2);
+    surf.rect(cx + 4, bodyTop + ra, 3, 6, HERO_PAL.L2);
+    surf.rect(cx - 7, bodyTop + la, 3, 2, HERO_PAL.S2);
+    surf.rect(cx + 4, bodyTop + ra, 3, 2, HERO_PAL.S2);
     return;
   }
 
   if (armMode.startsWith('potion')) {
     const pStep = parseInt(armMode.replace(/\D/g, ''), 10) || 0;
     const py = bodyTop + 1 - pStep;
-    // Arm raised holding green glowing potion
     surf.rect(cx + 3, bodyTop + 1, 4, 3, HERO_PAL.L2);
     surf.rect(cx + 5, py - 5, 4, 5, HERO_PAL.O);
     surf.rect(cx + 6, py - 4, 2, 3, HERO_PAL.POT1);
@@ -348,7 +358,6 @@ function drawHeroFrame(surf, col, row, opts = {}) {
   }
 
   if (armMode === 'shootUp') {
-    // Buster gun pointed vertically up
     surf.rect(cx + 2, bodyTop - 7, 4, 8, HERO_PAL.O);
     surf.rect(cx + 3, bodyTop - 6, 2, 6, HERO_PAL.P2);
     surf.set(cx + 3, bodyTop - 5, HERO_PAL.P3);
@@ -360,7 +369,6 @@ function drawHeroFrame(surf, col, row, opts = {}) {
   }
 
   if (armMode === 'shootDown') {
-    // Buster gun pointed down
     surf.rect(cx + 2, bodyTop + 4, 4, 7, HERO_PAL.O);
     surf.rect(cx + 3, bodyTop + 5, 2, 5, HERO_PAL.P2);
     surf.set(cx + 3, bodyTop + 7, HERO_PAL.P3);
@@ -372,30 +380,24 @@ function drawHeroFrame(surf, col, row, opts = {}) {
   }
 
   if (armMode.startsWith('sword')) {
-    // Sword attack pose: arm + blade
     const dir = armMode === 'swordWind' ? -1 : 1;
     surf.rect(cx + 3, bodyTop + 2, 4, 3, HERO_PAL.L2);
     if (swordFrame === 0) {
-      // Windup blade back over shoulder
       surf.line(cx - 2, bodyTop + 1, cx - 7, bodyTop - 6, HERO_PAL.O);
       surf.line(cx - 2, bodyTop, cx - 6, bodyTop - 6, HERO_PAL.W1);
     } else if (swordFrame === 1) {
-      // Extended forward slash
       surf.rect(cx + 5, bodyTop + 1, 10, 3, HERO_PAL.O);
       surf.rect(cx + 6, bodyTop + 2, 8, 1, HERO_PAL.W2);
       surf.rect(cx + 5, bodyTop + 1, 2, 3, HERO_PAL.G1);
     } else if (swordFrame === 2) {
-      // Diagonal follow-through
       surf.line(cx + 5, bodyTop + 2, cx + 13, bodyTop + 8 * dir, HERO_PAL.O);
       surf.line(cx + 5, bodyTop + 1, cx + 12, bodyTop + 7 * dir, HERO_PAL.W2);
     } else {
-      // Spin / return guard
       surf.line(cx + 4, bodyTop + 3, cx + 10, bodyTop - 5, HERO_PAL.W1);
     }
     return;
   }
 
-  // Default / Shoot / Dash / Hurt Buster Arm
   const gunExt = armMode === 'shoot' ? 8 : 6;
   const gunY = bodyTop + 2;
   surf.rect(cx + 2, gunY - 1, gunExt + 1, 5, HERO_PAL.O);
@@ -409,67 +411,52 @@ function drawHeroFrame(surf, col, row, opts = {}) {
 }
 
 function buildHeroSheet() {
-  const surf = new PixelSurface(192, 544);
-  // 0: idle (4)
+  const surf = new PixelSurface(192, 576);
   for (let i = 0; i < 4; i++) drawHeroFrame(surf, i, 0, { bobY: i === 2 ? 1 : 0, scarfWave: i });
-  // 1: walk (4)
   for (let i = 0; i < 4; i++) drawHeroFrame(surf, i, 1, { legMode: `walk${i}`, bobY: i % 2 === 1 ? -1 : 0, scarfWave: i });
-  // 2: run (6)
   for (let i = 0; i < 6; i++) drawHeroFrame(surf, i, 2, { legMode: `run${i}`, leanX: 1, bobY: i % 3 === 1 ? -1 : 0, scarfWave: i * 1.4 });
-  // 3: jump (3)
   drawHeroFrame(surf, 0, 3, { legMode: 'land', squashY: 1, scarfWave: 0 });
   drawHeroFrame(surf, 1, 3, { legMode: 'jump', bobY: -2, scarfWave: 2 });
   drawHeroFrame(surf, 2, 3, { legMode: 'jump', bobY: -3, scarfWave: 4 });
-  // 4: fall (3)
   for (let i = 0; i < 3; i++) drawHeroFrame(surf, i, 4, { legMode: 'fall', bobY: -1, scarfWave: i * 2 });
-  // 5: landing (2)
   drawHeroFrame(surf, 0, 5, { legMode: 'land', squashY: 2, scarfWave: 1 });
   drawHeroFrame(surf, 1, 5, { legMode: 'idle', squashY: 1, scarfWave: 2 });
-  // 6: sword attack 1 (4)
   drawHeroFrame(surf, 0, 6, { armMode: 'swordWind', swordFrame: 0 });
   drawHeroFrame(surf, 1, 6, { armMode: 'swordSwing', swordFrame: 1, leanX: 2 });
   drawHeroFrame(surf, 2, 6, { armMode: 'swordSwing', swordFrame: 2, leanX: 2 });
   drawHeroFrame(surf, 3, 6, { armMode: 'swordSwing', swordFrame: 3, leanX: 1 });
-  // 7: sword attack 2 (4)
   drawHeroFrame(surf, 0, 7, { armMode: 'swordWind', swordFrame: 0, bobY: 1 });
   drawHeroFrame(surf, 1, 7, { armMode: 'swordUp', swordFrame: 2, leanX: 2 });
   drawHeroFrame(surf, 2, 7, { armMode: 'swordUp', swordFrame: 1, leanX: 2 });
   drawHeroFrame(surf, 3, 7, { armMode: 'swordUp', swordFrame: 3, leanX: 1 });
-  // 8: sword attack 3 (5)
   drawHeroFrame(surf, 0, 8, { armMode: 'swordWind', swordFrame: 0, leanX: -1 });
   drawHeroFrame(surf, 1, 8, { armMode: 'swordSpin', swordFrame: 3, leanX: 1, bobY: -1 });
   drawHeroFrame(surf, 2, 8, { armMode: 'swordSpin', swordFrame: 1, leanX: 3 });
   drawHeroFrame(surf, 3, 8, { armMode: 'swordSpin', swordFrame: 2, leanX: 3 });
   drawHeroFrame(surf, 4, 8, { armMode: 'swordSpin', swordFrame: 3, leanX: 1 });
-  // 9: shoot (3)
   drawHeroFrame(surf, 0, 9, { armMode: 'shoot', muzzle: true, leanX: -1 });
   drawHeroFrame(surf, 1, 9, { armMode: 'shoot', muzzle: false });
   drawHeroFrame(surf, 2, 9, { armMode: 'buster' });
-  // 10: shoot up (3)
   drawHeroFrame(surf, 0, 10, { armMode: 'shootUp', muzzle: true });
   drawHeroFrame(surf, 1, 10, { armMode: 'shootUp', muzzle: false });
   drawHeroFrame(surf, 2, 10, { armMode: 'shootUp', muzzle: false, bobY: 1 });
-  // 11: shoot down (3)
   drawHeroFrame(surf, 0, 11, { legMode: 'fall', armMode: 'shootDown', muzzle: true });
   drawHeroFrame(surf, 1, 11, { legMode: 'fall', armMode: 'shootDown', muzzle: false });
   drawHeroFrame(surf, 2, 11, { legMode: 'fall', armMode: 'shootDown', muzzle: false, bobY: -1 });
-  // 12: hurt (3)
   drawHeroFrame(surf, 0, 12, { legMode: 'hurt', leanX: -2, hurtFlash: true });
   drawHeroFrame(surf, 1, 12, { legMode: 'hurt', leanX: -1, hurtFlash: false });
   drawHeroFrame(surf, 2, 12, { legMode: 'hurt', leanX: -1, hurtFlash: true });
-  // 13: death (5)
   for (let i = 0; i < 5; i++) drawHeroFrame(surf, i, 13, { deadFrame: i });
-  // 14: climb (4)
   for (let i = 0; i < 4; i++) drawHeroFrame(surf, i, 14, { climbFrame: i });
-  // 15: dash (3)
   for (let i = 0; i < 3; i++) drawHeroFrame(surf, i, 15, { legMode: 'dash', leanX: 3, bobY: 2, scarfWave: i * 2 });
-  // 16: potion use (4)
   for (let i = 0; i < 4; i++) drawHeroFrame(surf, i, 16, { armMode: `potion${i}`, bobY: i === 2 ? -1 : 0 });
+  // Row 17: hangClimb (4 frames hand-over-hand)
+  for (let i = 0; i < 4; i++) drawHeroFrame(surf, i, 17, { hangFrame: i });
 
   surf.save('hero.png');
 }
 
-// ---- 2. 10 SWORDS SHEET (160 x 336: row 0 = 10x 16x16 icons; y=16..335 = 10x 3-frame 32x32 slash arcs) ----
+// ---- 2. 10 SWORDS SHEET ----
 const SWORD_DEFS = [
   { name: 'Iron Sword', c1: '#64748b', c2: '#cbd5e1', c3: '#ffffff', hilt: '#b45309' },
   { name: 'Crystal Sword', c1: '#0284c7', c2: '#38bdf8', c3: '#e0f2fe', hilt: '#1e3a8a' },
@@ -486,10 +473,8 @@ const SWORD_DEFS = [
 function buildSwordsSheet() {
   const surf = new PixelSurface(160, 336);
   SWORD_DEFS.forEach((sw, idx) => {
-    // 16x16 icon
     const ix = idx * 16;
     const thick = idx === 6 || idx === 7 ? 2 : 1;
-    // Diagonal blade bottom-left to top-right
     for (let i = 4; i <= 13; i++) {
       const bx = ix + i;
       const by = 15 - i;
@@ -505,14 +490,12 @@ function buildSwordsSheet() {
       if (thick === 2) surf.set(bx - 1, by, sw.c1);
       else surf.set(bx, by + 1, sw.c1);
     }
-    // Crossguard + Grip
     surf.rect(ix + 2, 10, 4, 4, '#0f111a');
     surf.line(ix + 2, 9, ix + 6, 13, sw.hilt);
     surf.set(ix + 2, 13, sw.hilt);
     surf.set(ix + 3, 12, sw.hilt);
     if (idx === 9 || idx === 5) surf.set(ix + 13, 2, '#ffffff');
 
-    // 3-frame 32x32 slash arc starting at y = 16 + idx * 32
     const sy = 16 + idx * 32;
     for (let f = 0; f < 3; f++) {
       const fx = f * 32;
@@ -535,115 +518,246 @@ function buildSwordsSheet() {
   surf.save('swords.png');
 }
 
-// ---- 3. ENEMIES & BOSS SHEET (192 x 208) ----
-function buildEnemiesSheet() {
+// ---- 3. 40 DISTINCT KEROCO ENEMIES (128 x 1280 -> 4 frames x 40 rows of 32x32) ----
+const KEROCO_TEMPLATES = [
+  // 0..9: Slimes & Critters
+  { shape: 'slime', c1: '#22c55e', c2: '#86efac', eye: '#0f172a', accent: '#166534' },
+  { shape: 'slime', c1: '#06b6d4', c2: '#a5f3fc', eye: '#1e3a8a', accent: '#0e7490' },
+  { shape: 'slime', c1: '#f97316', c2: '#fed7aa', eye: '#450a0a', accent: '#dc2626' },
+  { shape: 'slime', c1: '#a855f7', c2: '#e9d5ff', eye: '#facc15', accent: '#581c87' },
+  { shape: 'slime', c1: '#eab308', c2: '#fef08a', eye: '#713f12', accent: '#ca8a04' },
+  { shape: 'crawler', c1: '#d97706', c2: '#fde68a', eye: '#dc2626', accent: '#78350f' },
+  { shape: 'crawler', c1: '#65a30d', c2: '#bef264', eye: '#ef4444', accent: '#365314' },
+  { shape: 'crawler', c1: '#0284c7', c2: '#7dd3fc', eye: '#fef08a', accent: '#0c4a6e' },
+  { shape: 'crawler', c1: '#9333ea', c2: '#d8b4fe', eye: '#22d3ee', accent: '#3b0764' },
+  { shape: 'crawler', c1: '#dc2626', c2: '#fca5a5', eye: '#fef08a', accent: '#7f1d1d' },
+  // 10..17: Flyers & Bats & Ghosts
+  { shape: 'bat', c1: '#7e22ce', c2: '#c084fc', eye: '#facc15', accent: '#4c1d95' },
+  { shape: 'bat', c1: '#b91c1c', c2: '#f87171', eye: '#fef08a', accent: '#7f1d1d' },
+  { shape: 'bat', c1: '#0284c7', c2: '#7dd3fc', eye: '#ffffff', accent: '#1e3a8a' },
+  { shape: 'bat', c1: '#4d7c0f', c2: '#a3e635', eye: '#ef4444', accent: '#1a2e05' },
+  { shape: 'ghost', c1: '#94a3b8', c2: '#f1f5f9', eye: '#38bdf8', accent: '#475569' },
+  { shape: 'ghost', c1: '#6366f1', c2: '#c7d2fe', eye: '#facc15', accent: '#312e81' },
+  { shape: 'ghost', c1: '#ec4899', c2: '#fbcfe8', eye: '#ffffff', accent: '#831843' },
+  { shape: 'ghost', c1: '#14b8a6', c2: '#99f6e4', eye: '#fef08a', accent: '#134e4a' },
+  // 18..25: Troopers & Shooters & Mages
+  { shape: 'trooper', c1: '#dc2626', c2: '#f87171', eye: '#fef08a', accent: '#475569' },
+  { shape: 'trooper', c1: '#2563eb', c2: '#93c5fd', eye: '#38bdf8', accent: '#1e293b' },
+  { shape: 'trooper', c1: '#16a34a', c2: '#86efac', eye: '#fde047', accent: '#14532d' },
+  { shape: 'trooper', c1: '#ca8a04', c2: '#fde047', eye: '#ef4444', accent: '#422006' },
+  { shape: 'mage', c1: '#6b21a8', c2: '#c084fc', eye: '#38bdf8', accent: '#facc15' },
+  { shape: 'mage', c1: '#b91c1c', c2: '#fb923c', eye: '#fef08a', accent: '#7c2d12' },
+  { shape: 'mage', c1: '#0e7490', c2: '#67e8f9', eye: '#ffffff', accent: '#164e63' },
+  { shape: 'mage', c1: '#1e293b', c2: '#64748b', eye: '#f43f5e', accent: '#a855f7' },
+  // 26..33: Armored Knights & Skeletons & Mummies
+  { shape: 'knight', c1: '#475569', c2: '#94a3b8', eye: '#38bdf8', accent: '#eab308' },
+  { shape: 'knight', c1: '#991b1b', c2: '#ef4444', eye: '#fef08a', accent: '#fbbf24' },
+  { shape: 'knight', c1: '#1e3a8a', c2: '#60a5fa', eye: '#ffffff', accent: '#38bdf8' },
+  { shape: 'knight', c1: '#3b0764', c2: '#a855f7', eye: '#f43f5e', accent: '#e9d5ff' },
+  { shape: 'skeleton', c1: '#e2e8f0', c2: '#ffffff', eye: '#ef4444', accent: '#64748b' },
+  { shape: 'skeleton', c1: '#d97706', c2: '#fef3c7', eye: '#22d3ee', accent: '#78350f' },
+  { shape: 'skeleton', c1: '#7c3aed', c2: '#ddd6fe', eye: '#facc15', accent: '#4c1d95' },
+  { shape: 'skeleton', c1: '#0f766e', c2: '#99f6e4', eye: '#f97316', accent: '#134e4a' },
+  // 34..39: Turrets & Golems
+  { shape: 'turret', c1: '#334155', c2: '#64748b', eye: '#38bdf8', accent: '#facc15' },
+  { shape: 'turret', c1: '#7f1d1d', c2: '#b91c1c', eye: '#f97316', accent: '#fef08a' },
+  { shape: 'turret', c1: '#1e3a8a', c2: '#2563eb', eye: '#22d3ee', accent: '#ffffff' },
+  { shape: 'golem', c1: '#78350f', c2: '#b45309', eye: '#facc15', accent: '#451a03' },
+  { shape: 'golem', c1: '#0369a1', c2: '#38bdf8', eye: '#ffffff', accent: '#0c4a6e' },
+  { shape: 'golem', c1: '#374151', c2: '#9ca3af', eye: '#ef4444', accent: '#f97316' },
+];
+
+function buildKerocoEnemiesSheet() {
+  const surf = new PixelSurface(128, KEROCO_TEMPLATES.length * 32);
+  KEROCO_TEMPLATES.forEach((t, idx) => {
+    for (let f = 0; f < 4; f++) {
+      const ox = f * 32;
+      const oy = idx * 32;
+      const flash = f === 3;
+      const main = flash ? '#ffffff' : t.c1;
+      const hi = flash ? '#fef08a' : t.c2;
+      const acc = flash ? '#ffffff' : t.accent;
+
+      if (t.shape === 'slime') {
+        const squish = f === 1 ? 2 : f === 2 ? -2 : 0;
+        const h = 11 - squish;
+        const y = oy + 28 - h;
+        surf.rect(ox + 8, y - 1, 16, h + 2, '#0f111a');
+        surf.rect(ox + 9, y, 14, h, main);
+        surf.rect(ox + 10, y + 1, 10, 3, hi);
+        surf.rect(ox + 11, y + 4, 2, 3, t.eye);
+        surf.rect(ox + 17, y + 4, 2, 3, t.eye);
+        if (idx % 2 === 1) surf.rect(ox + 14, y - 3, 4, 2, acc);
+      } else if (t.shape === 'crawler') {
+        const legOff = f % 2 === 0 ? 1 : -1;
+        surf.rect(ox + 6, oy + 16, 20, 9, '#0f111a');
+        surf.rect(ox + 7, oy + 17, 18, 7, main);
+        surf.rect(ox + 9, oy + 17, 14, 3, hi);
+        surf.rect(ox + 8, oy + 20, 3, 2, t.eye);
+        surf.rect(ox + 4, oy + 14, 3, 3, acc); // pincer/horn
+        for (let l = 0; l < 3; l++) {
+          surf.rect(ox + 8 + l * 6, oy + 25 + (l % 2 === 0 ? legOff : -legOff), 2, 4, acc);
+        }
+      } else if (t.shape === 'bat') {
+        const wingY = f % 2 === 0 ? 10 : 19;
+        surf.circle(ox + 16, oy + 16, 5, '#0f111a');
+        surf.circle(ox + 16, oy + 16, 4, main);
+        surf.set(ox + 14, oy + 15, t.eye);
+        surf.set(ox + 18, oy + 15, t.eye);
+        surf.line(ox + 12, oy + 16, ox + 4, oy + wingY, '#0f111a');
+        surf.line(ox + 12, oy + 15, ox + 5, oy + wingY, hi);
+        surf.line(ox + 20, oy + 16, ox + 28, oy + wingY, '#0f111a');
+        surf.line(ox + 20, oy + 15, ox + 27, oy + wingY, hi);
+      } else if (t.shape === 'ghost') {
+        const bob = f === 1 ? -2 : f === 2 ? 1 : 0;
+        surf.circle(ox + 16, oy + 14 + bob, 7, '#0f111a');
+        surf.circle(ox + 16, oy + 14 + bob, 6, main);
+        surf.rect(ox + 10, oy + 14 + bob, 12, 10, main);
+        surf.rect(ox + 12, oy + 12 + bob, 2, 3, t.eye);
+        surf.rect(ox + 17, oy + 12 + bob, 2, 3, t.eye);
+        surf.rect(ox + 11, oy + 24 + bob, 3, 2, hi);
+        surf.rect(ox + 17, oy + 24 + bob, 3, 2, hi);
+      } else if (t.shape === 'trooper') {
+        const step = f === 1 ? 2 : 0;
+        surf.rect(ox + 10, oy + 7, 12, 10, '#0f111a');
+        surf.rect(ox + 11, oy + 8, 10, 8, main);
+        surf.rect(ox + 12, oy + 10, 6, 3, t.eye);
+        surf.rect(ox + 11, oy + 17, 10, 7, acc);
+        surf.rect(ox + 10 - step, oy + 24, 4, 4, '#475569');
+        surf.rect(ox + 18 + step, oy + 24, 4, 4, '#475569');
+        surf.rect(ox + 5, oy + 18, 7, 3, hi);
+        if (f === 2) surf.circle(ox + 4, oy + 19, 2, '#f97316');
+      } else if (t.shape === 'mage') {
+        const bob = f === 1 ? -1 : 0;
+        surf.rect(ox + 10, oy + 11 + bob, 12, 16, '#0f111a');
+        surf.rect(ox + 11, oy + 12 + bob, 10, 14, main);
+        surf.rect(ox + 9, oy + 8 + bob, 14, 4, acc); // wizard brim
+        surf.rect(ox + 13, oy + 4 + bob, 6, 4, main);
+        surf.rect(ox + 12, oy + 14 + bob, 2, 2, t.eye);
+        surf.rect(ox + 16, oy + 14 + bob, 2, 2, t.eye);
+        // staff
+        surf.rect(ox + 6, oy + 10 + bob, 2, 17, '#92400e');
+        surf.circle(ox + 7, oy + 9 + bob, 2, f === 2 ? '#fef08a' : hi);
+      } else if (t.shape === 'knight') {
+        surf.rect(ox + 10, oy + 6, 13, 18, '#0f111a');
+        surf.rect(ox + 11, oy + 7, 11, 16, main);
+        surf.rect(ox + 12, oy + 10, 4, 2, t.eye);
+        surf.rect(ox + 11, oy + 24, 4, 4, '#1e293b');
+        surf.rect(ox + 18, oy + 24, 4, 4, '#1e293b');
+        const lift = f === 2 ? -4 : 0;
+        surf.rect(ox + 5, oy + 10 + lift, 6, 14, '#0f111a');
+        surf.rect(ox + 6, oy + 11 + lift, 4, 12, acc);
+        surf.rect(ox + 7, oy + 13 + lift, 2, 8, hi);
+      } else if (t.shape === 'skeleton') {
+        const step = f === 1 ? 2 : 0;
+        surf.rect(ox + 11, oy + 6, 10, 9, '#0f111a');
+        surf.rect(ox + 12, oy + 7, 8, 7, main);
+        surf.rect(ox + 12, oy + 10, 2, 2, t.eye);
+        surf.rect(ox + 16, oy + 10, 2, 2, t.eye);
+        surf.rect(ox + 13, oy + 16, 6, 8, acc);
+        surf.rect(ox + 12, oy + 17, 8, 2, hi);
+        surf.rect(ox + 11 - step, oy + 24, 3, 4, main);
+        surf.rect(ox + 17 + step, oy + 24, 3, 4, main);
+        surf.line(ox + 7, oy + 17, ox + 10, oy + 12, hi); // bone sword
+      } else if (t.shape === 'turret') {
+        surf.rect(ox + 8, oy + 12, 16, 16, '#0f111a');
+        surf.rect(ox + 9, oy + 13, 14, 14, main);
+        surf.rect(ox + 12, oy + 16, 8, 6, f === 2 ? '#ef4444' : t.eye);
+        surf.rect(ox + 4, oy + 17, 6, 4, acc);
+      } else {
+        // golem
+        const stomp = f === 1 ? -1 : 0;
+        surf.rect(ox + 6, oy + 6 + stomp, 20, 22, '#0f111a');
+        surf.rect(ox + 7, oy + 7 + stomp, 18, 18, main);
+        surf.rect(ox + 9, oy + 8 + stomp, 14, 5, hi);
+        surf.rect(ox + 10, oy + 13 + stomp, 4, 3, t.eye);
+        surf.rect(ox + 17, oy + 13 + stomp, 4, 3, t.eye);
+        surf.rect(ox + 8, oy + 24, 5, 5, acc);
+        surf.rect(ox + 19, oy + 24, 5, 5, acc);
+      }
+    }
+  });
+  surf.save('enemies_keroco.png');
+}
+
+// ---- 4. 10 BOSSES + 1 FINAL BOSS (192 x 528 -> 4 frames x 11 rows of 48x48) ----
+const BOSS_PALETTES = [
+  { name: 'Ruin Dragon', c1: '#7f1d1d', c2: '#dc2626', horn: '#eab308', eye: '#fef08a', wing: '#991b1b', final: false },
+  { name: 'Frost Titan', c1: '#0c4a6e', c2: '#0284c7', horn: '#a5f3fc', eye: '#ffffff', wing: '#38bdf8', final: false },
+  { name: 'Sand Sphinx', c1: '#78350f', c2: '#d97706', horn: '#facc15', eye: '#ef4444', wing: '#b45309', final: false },
+  { name: 'Magma King', c1: '#450a0a', c2: '#ea580c', horn: '#fde047', eye: '#ffffff', wing: '#f97316', final: false },
+  { name: 'Storm Mech', c1: '#1e1b4b', c2: '#4f46e5', horn: '#38bdf8', eye: '#facc15', wing: '#818cf8', final: false },
+  { name: 'Crypt Reaper', c1: '#1f2937', c2: '#4b5563', horn: '#e2e8f0', eye: '#a855f7', wing: '#6b21a8', final: false },
+  { name: 'Hydra Serpent', c1: '#064e3b', c2: '#059669', horn: '#6ee7b7', eye: '#fde047', wing: '#10b981', final: false },
+  { name: 'Void Warden', c1: '#3b0764', c2: '#7e22ce', horn: '#f43f5e', eye: '#22d3ee', wing: '#c084fc', final: false },
+  { name: 'Solar Golem', c1: '#713f12', c2: '#ca8a04', horn: '#ffffff', eye: '#38bdf8', wing: '#facc15', final: false },
+  { name: 'Cyber Overlord', c1: '#0f172a', c2: '#334155', horn: '#ef4444', eye: '#22d3ee', wing: '#64748b', final: false },
+  { name: 'Abyss Emperor', c1: '#1e1b2e', c2: '#9333ea', horn: '#facc15', eye: '#f43f5e', wing: '#ef4444', final: true },
+];
+
+function buildBossesSheet() {
+  const surf = new PixelSurface(192, BOSS_PALETTES.length * 48);
+  BOSS_PALETTES.forEach((b, idx) => {
+    for (let f = 0; f < 4; f++) {
+      const ox = f * 48;
+      const oy = idx * 48;
+      const jaw = f === 1 || f === 2 ? 3 : 0;
+      const c1 = f === 3 ? '#ffffff' : b.c1;
+      const c2 = f === 3 ? '#fef08a' : b.c2;
+
+      // Wings / Shoulder plates (Final Boss has grand wide wings + crown)
+      if (b.final || idx % 2 === 0) {
+        const wingY = f % 2 === 0 ? 8 : 14;
+        surf.rect(ox + 28, oy + wingY, 15, 16, '#0f111a');
+        surf.rect(ox + 29, oy + wingY + 1, 13, 14, b.wing);
+      }
+      // Body
+      surf.rect(ox + 14, oy + 14, 24, 26, '#0f111a');
+      surf.rect(ox + 15, oy + 15, 22, 24, c1);
+      surf.rect(ox + 18, oy + 18, 12, 14, c2);
+      // Head & Horns/Crown
+      surf.rect(ox + 8, oy + 8, 18, 14, '#0f111a');
+      surf.rect(ox + 9, oy + 9, 16, 12, c2);
+      surf.rect(ox + 20, oy + 3, 4, 7, b.horn);
+      if (b.final) {
+        surf.rect(ox + 11, oy + 2, 4, 6, b.horn);
+        surf.rect(ox + 15, oy + 1, 4, 7, '#ffffff');
+      }
+      surf.rect(ox + 12, oy + 12, 4, 3, f === 1 ? '#fef08a' : b.eye);
+      // Jaw / Cannon
+      surf.rect(ox + 6, oy + 18 + jaw, 10, 4, c1);
+      if (f === 1) surf.circle(ox + 6, oy + 17, 3, '#fef08a');
+      if (f === 2) surf.circle(ox + 5, oy + 17, 4, '#f97316');
+      // Legs
+      surf.rect(ox + 14, oy + 39, 8, 7, '#0f111a');
+      surf.rect(ox + 28, oy + 39, 8, 7, '#0f111a');
+      surf.rect(ox + 15, oy + 40, 6, 5, c1);
+      surf.rect(ox + 29, oy + 40, 6, 5, c1);
+    }
+  });
+  surf.save('bosses.png');
+}
+
+// Keep legacy enemies.png intact for fallback safety
+function buildLegacyEnemiesSheet() {
   const surf = new PixelSurface(192, 208);
-
-  // Row 0: Slime Hopper (4 frames, 32x32)
   for (let f = 0; f < 4; f++) {
-    const ox = f * 32, oy = 0;
-    const squish = f === 1 ? 2 : f === 2 ? -2 : 0;
-    const h = 11 - squish;
-    const y = oy + 28 - h;
-    surf.rect(ox + 8, y - 1, 16, h + 2, '#0f111a');
-    surf.rect(ox + 9, y, 14, h, f === 3 ? '#ffffff' : '#22c55e');
-    surf.rect(ox + 10, y + 1, 10, 3, f === 3 ? '#fef08a' : '#86efac');
-    surf.rect(ox + 11, y + 4, 2, 3, '#0f172a');
-    surf.rect(ox + 17, y + 4, 2, 3, '#0f172a');
+    const ox = f * 32;
+    surf.rect(ox + 8, 16, 16, 12, '#22c55e');
   }
-
-  // Row 1: Cyber Bat / Wyvern Scout (4 frames, 32x32)
-  for (let f = 0; f < 4; f++) {
-    const ox = f * 32, oy = 32;
-    const wingY = f % 2 === 0 ? 10 : 18;
-    surf.circle(ox + 16, oy + 16, 5, '#0f111a');
-    surf.circle(ox + 16, oy + 16, 4, f === 3 ? '#ffffff' : '#7e22ce');
-    surf.set(ox + 14, oy + 15, '#facc15');
-    surf.set(ox + 18, oy + 15, '#facc15');
-    // wings
-    surf.line(ox + 12, oy + 16, ox + 4, oy + wingY, '#0f111a');
-    surf.line(ox + 12, oy + 15, ox + 5, oy + wingY, '#a855f7');
-    surf.line(ox + 20, oy + 16, ox + 28, oy + wingY, '#0f111a');
-    surf.line(ox + 20, oy + 15, ox + 27, oy + wingY, '#a855f7');
-  }
-
-  // Row 2: Blaster Trooper (4 frames, 32x32)
-  for (let f = 0; f < 4; f++) {
-    const ox = f * 32, oy = 64;
-    const step = f === 1 ? 2 : 0;
-    surf.rect(ox + 10, oy + 7, 12, 10, '#0f111a');
-    surf.rect(ox + 11, oy + 8, 10, 8, f === 3 ? '#ffffff' : '#dc2626');
-    surf.rect(ox + 12, oy + 10, 6, 3, '#fef08a'); // visor
-    surf.rect(ox + 11, oy + 17, 10, 7, '#991b1b');
-    surf.rect(ox + 10 - step, oy + 24, 4, 4, '#475569');
-    surf.rect(ox + 18 + step, oy + 24, 4, 4, '#475569');
-    // gun barrel
-    surf.rect(ox + 5, oy + 18, 7, 3, '#cbd5e1');
-    if (f === 2) surf.circle(ox + 4, oy + 19, 2, '#f97316'); // telegraph glow
-  }
-
-  // Row 3: Shield Knight (4 frames, 32x32)
-  for (let f = 0; f < 4; f++) {
-    const ox = f * 32, oy = 96;
-    surf.rect(ox + 10, oy + 6, 13, 18, '#0f111a');
-    surf.rect(ox + 11, oy + 7, 11, 16, f === 3 ? '#ffffff' : '#475569');
-    surf.rect(ox + 12, oy + 10, 4, 2, '#38bdf8');
-    surf.rect(ox + 11, oy + 24, 4, 4, '#1e293b');
-    surf.rect(ox + 18, oy + 24, 4, 4, '#1e293b');
-    // Heavy shield in front (left side facing hero)
-    const shieldLift = f === 2 ? -4 : 0;
-    surf.rect(ox + 5, oy + 10 + shieldLift, 6, 14, '#0f111a');
-    surf.rect(ox + 6, oy + 11 + shieldLift, 4, 12, '#eab308');
-    surf.rect(ox + 7, oy + 13 + shieldLift, 2, 8, '#fef08a');
-  }
-
-  // Row 4: Turret Drone (4 frames, 32x32)
-  for (let f = 0; f < 4; f++) {
-    const ox = f * 32, oy = 128;
-    surf.rect(ox + 8, oy + 12, 16, 16, '#0f111a');
-    surf.rect(ox + 9, oy + 13, 14, 14, f === 3 ? '#ffffff' : '#334155');
-    surf.rect(ox + 12, oy + 16, 8, 6, f === 1 ? '#facc15' : f === 2 ? '#ef4444' : '#38bdf8');
-    surf.rect(ox + 4, oy + 17, 6, 4, '#94a3b8');
-  }
-
-  // Row 5 (y=160): Boss 48x48 (4 frames) — Armored Dragon Colossus
-  for (let f = 0; f < 4; f++) {
-    const ox = f * 48, oy = 160;
-    const jaw = f === 1 || f === 2 ? 3 : 0;
-    // body
-    surf.rect(ox + 14, oy + 14, 24, 26, '#0f111a');
-    surf.rect(ox + 15, oy + 15, 22, 24, f === 3 ? '#ffffff' : '#7f1d1d');
-    surf.rect(ox + 18, oy + 18, 12, 14, '#dc2626');
-    // horns & head
-    surf.rect(ox + 8, oy + 8, 18, 14, '#0f111a');
-    surf.rect(ox + 9, oy + 9, 16, 12, '#b91c1c');
-    surf.rect(ox + 20, oy + 4, 4, 6, '#eab308');
-    surf.rect(ox + 12, oy + 12, 4, 3, f === 1 ? '#fef08a' : '#f97316');
-    // jaw/fire telegraph
-    surf.rect(ox + 6, oy + 18 + jaw, 10, 4, '#991b1b');
-    if (f === 1) surf.circle(ox + 6, oy + 17, 3, '#fef08a');
-    if (f === 2) surf.circle(ox + 5, oy + 17, 4, '#f97316');
-    // legs & claws
-    surf.rect(ox + 14, oy + 39, 8, 7, '#450a0a');
-    surf.rect(ox + 28, oy + 39, 8, 7, '#450a0a');
-  }
-
   surf.save('enemies.png');
 }
 
-// ---- 4. ITEMS, PROJECTILES, CHESTS & VFX (128 x 64 -> 8 cols x 4 rows of 16x16) ----
+// ---- 5. ITEMS, PROJECTILES, CHESTS & VFX ----
 function buildItemsVfxSheet() {
   const surf = new PixelSurface(128, 64);
   const drawCell = (col, row, fn) => fn(col * 16, row * 16);
 
-  // Row 0: 8 Drops
-  // 0: Ammo Small
   drawCell(0, 0, (ox, oy) => {
     surf.rect(ox + 5, oy + 4, 6, 9, '#0f111a');
     surf.rect(ox + 6, oy + 6, 4, 6, '#eab308');
     surf.rect(ox + 6, oy + 4, 4, 2, '#94a3b8');
   });
-  // 1: Ammo Medium
   drawCell(1, 0, (ox, oy) => {
     surf.rect(ox + 3, oy + 4, 10, 9, '#0f111a');
     surf.rect(ox + 4, oy + 6, 3, 6, '#eab308');
@@ -651,35 +765,30 @@ function buildItemsVfxSheet() {
     surf.rect(ox + 4, oy + 4, 3, 2, '#cbd5e1');
     surf.rect(ox + 9, oy + 4, 3, 2, '#cbd5e1');
   });
-  // 2: Ammo Large
   drawCell(2, 0, (ox, oy) => {
     surf.rect(ox + 2, oy + 3, 12, 10, '#0f111a');
     surf.rect(ox + 3, oy + 4, 10, 8, '#166534');
     surf.rect(ox + 4, oy + 6, 8, 4, '#facc15');
     surf.rect(ox + 5, oy + 2, 6, 2, '#94a3b8');
   });
-  // 3: HP Potion
   drawCell(3, 0, (ox, oy) => {
     surf.rect(ox + 6, oy + 2, 4, 3, '#92400e');
     surf.circle(ox + 8, oy + 10, 5, '#0f111a');
     surf.circle(ox + 8, oy + 10, 4, '#ef4444');
     surf.set(ox + 6, oy + 8, '#fecaca');
   });
-  // 4: Mana Potion
   drawCell(4, 0, (ox, oy) => {
     surf.rect(ox + 6, oy + 2, 4, 3, '#92400e');
     surf.circle(ox + 8, oy + 10, 5, '#0f111a');
     surf.circle(ox + 8, oy + 10, 4, '#2563eb');
     surf.set(ox + 6, oy + 8, '#bfdbfe');
   });
-  // 5: Gold Coin
   drawCell(5, 0, (ox, oy) => {
     surf.circle(ox + 8, oy + 8, 5, '#0f111a');
     surf.circle(ox + 8, oy + 8, 4, '#facc15');
     surf.rect(ox + 7, oy + 6, 2, 4, '#ca8a04');
     surf.set(ox + 6, oy + 6, '#fef9c3');
   });
-  // 6: Rare Crystal
   drawCell(6, 0, (ox, oy) => {
     surf.rect(ox + 6, oy + 2, 4, 12, '#0f111a');
     surf.rect(ox + 4, oy + 5, 8, 6, '#0f111a');
@@ -687,15 +796,13 @@ function buildItemsVfxSheet() {
     surf.rect(ox + 5, oy + 6, 6, 4, '#67e8f9');
     surf.set(ox + 7, oy + 4, '#ffffff');
   });
-  // 7: Weapon Material (Steel Ingot)
+  // 7: Iron Ingot
   drawCell(7, 0, (ox, oy) => {
     surf.rect(ox + 2, oy + 5, 12, 7, '#0f111a');
     surf.rect(ox + 3, oy + 6, 10, 5, '#94a3b8');
     surf.rect(ox + 4, oy + 6, 8, 2, '#f1f5f9');
   });
 
-  // Row 1: Projectiles & Chests
-  // 0-1: Hero Buster Shot
   drawCell(0, 1, (ox, oy) => {
     surf.rect(ox + 3, oy + 5, 10, 6, '#0f111a');
     surf.rect(ox + 4, oy + 6, 8, 4, '#facc15');
@@ -705,37 +812,31 @@ function buildItemsVfxSheet() {
     surf.rect(ox + 2, oy + 4, 12, 8, '#38bdf8');
     surf.rect(ox + 4, oy + 6, 8, 4, '#ffffff');
   });
-  // 2: Heavy Shot / Excalibur Beam
   drawCell(2, 1, (ox, oy) => {
     surf.rect(ox + 2, oy + 2, 12, 12, '#eab308');
     surf.rect(ox + 4, oy + 4, 8, 8, '#fef08a');
     surf.rect(ox + 6, oy + 5, 5, 6, '#ffffff');
   });
-  // 3: Enemy Plasma Orb
   drawCell(3, 1, (ox, oy) => {
     surf.circle(ox + 8, oy + 8, 4, '#0f111a');
     surf.circle(ox + 8, oy + 8, 3, '#ef4444');
     surf.set(ox + 7, oy + 7, '#fef08a');
   });
-  // 4: Boss Fireball
   drawCell(4, 1, (ox, oy) => {
     surf.circle(ox + 8, oy + 8, 6, '#991b1b');
     surf.circle(ox + 8, oy + 8, 4, '#f97316');
     surf.circle(ox + 8, oy + 8, 2, '#fef08a');
   });
-  // 5: Excalibur Wave
   drawCell(5, 1, (ox, oy) => {
     surf.rect(ox + 4, oy + 1, 7, 14, '#fde047');
     surf.rect(ox + 6, oy + 2, 4, 12, '#ffffff');
   });
-  // 6: Chest Closed
   drawCell(6, 1, (ox, oy) => {
     surf.rect(ox + 1, oy + 4, 14, 11, '#0f111a');
     surf.rect(ox + 2, oy + 5, 12, 9, '#92400e');
     surf.rect(ox + 2, oy + 8, 12, 2, '#facc15');
     surf.rect(ox + 7, oy + 7, 2, 4, '#fef08a');
   });
-  // 7: Chest Open
   drawCell(7, 1, (ox, oy) => {
     surf.rect(ox + 1, oy + 7, 14, 8, '#0f111a');
     surf.rect(ox + 2, oy + 8, 12, 6, '#78350f');
@@ -743,7 +844,6 @@ function buildItemsVfxSheet() {
     surf.rect(ox + 5, oy + 6, 6, 3, '#fef08a');
   });
 
-  // Row 2: Spark (0-3) & Explosion (4-7)
   for (let f = 0; f < 4; f++) {
     drawCell(f, 2, (ox, oy) => {
       const r = 2 + f * 2;
@@ -758,7 +858,6 @@ function buildItemsVfxSheet() {
     });
   }
 
-  // Row 3: Crit Star (0-3) & Goal Portal (4-7)
   for (let f = 0; f < 4; f++) {
     drawCell(f, 3, (ox, oy) => {
       const r = 3 + f;
@@ -776,17 +875,15 @@ function buildItemsVfxSheet() {
   surf.save('items_vfx.png');
 }
 
-// ---- 5. MENU ICONS (120 x 24 -> 5 icons of 24x24) ----
+// ---- 6. MENU ICONS ----
 function buildMenuIconsSheet() {
   const surf = new PixelSurface(120, 24);
-  // 0: World Map
   surf.circle(12, 12, 9, '#0f111a');
   surf.circle(12, 12, 8, '#2563eb');
   surf.rect(7, 8, 5, 4, '#22c55e');
   surf.rect(13, 11, 5, 6, '#22c55e');
   surf.rect(9, 15, 4, 3, '#16a34a');
 
-  // 1: Quest Scroll
   surf.rect(24 + 5, 3, 14, 18, '#0f111a');
   surf.rect(24 + 6, 4, 12, 16, '#fef3c7');
   surf.rect(24 + 4, 4, 16, 3, '#d97706');
@@ -794,20 +891,17 @@ function buildMenuIconsSheet() {
   surf.rect(24 + 11, 8, 2, 5, '#dc2626');
   surf.rect(24 + 11, 14, 2, 2, '#dc2626');
 
-  // 2: Shop Potion & Coin
   surf.rect(48 + 9, 3, 6, 3, '#92400e');
   surf.circle(48 + 12, 14, 7, '#0f111a');
   surf.circle(48 + 12, 14, 6, '#ef4444');
   surf.circle(48 + 17, 17, 4, '#facc15');
 
-  // 3: Blacksmith Anvil & Hammer
   surf.rect(72 + 4, 13, 16, 4, '#475569');
   surf.rect(72 + 7, 17, 10, 4, '#334155');
   surf.rect(72 + 5, 11, 12, 3, '#94a3b8');
   surf.line(72 + 12, 4, 72 + 17, 9, '#eab308');
   surf.rect(72 + 8, 4, 6, 4, '#cbd5e1');
 
-  // 4: Equipment Sword & Shield
   surf.rect(96 + 6, 5, 12, 14, '#0f111a');
   surf.rect(96 + 7, 6, 10, 12, '#3b82f6');
   surf.rect(96 + 9, 8, 6, 8, '#eab308');
@@ -816,24 +910,113 @@ function buildMenuIconsSheet() {
   surf.save('menu_icons.png');
 }
 
-// ---- 6. TILESET (128 x 80 -> 8 cols x 5 world rows of 16x16) ----
-const WORLD_PALETTES = [
-  // World 1: Emerald Ruins
-  { top: '#22c55e', topH: '#86efac', rock1: '#475569', rock2: '#334155', rockH: '#64748b', plat: '#b45309', accent: '#facc15' },
-  // World 2: Crystal Cavern
-  { top: '#06b6d4', topH: '#a5f3fc', rock1: '#1e3a8a', rock2: '#172554', rockH: '#3b82f6', plat: '#0284c7', accent: '#67e8f9' },
-  // World 3: Ember Foundry
-  { top: '#f97316', topH: '#fed7aa', rock1: '#450a0a', rock2: '#271212', rockH: '#7f1d1d', plat: '#9a3412', accent: '#facc15' },
-  // World 4: Storm Citadel
-  { top: '#eab308', topH: '#fef08a', rock1: '#312e81', rock2: '#1e1b4b', rockH: '#4f46e5', plat: '#6366f1', accent: '#38bdf8' },
-  // World 5: Abyssal Spire
-  { top: '#a855f7', topH: '#e9d5ff', rock1: '#1e1b2e', rock2: '#0f0d18', rockH: '#4c1d95', plat: '#7e22ce', accent: '#f43f5e' },
+// ---- 7. GEAR ICONS (80 x 32 -> row 0: 5 Armors 16x16, row 1: 4 Accessories 16x16) ----
+function buildGearIconsSheet() {
+  const surf = new PixelSurface(80, 32);
+  const armorColors = [
+    { c1: '#0f766e', c2: '#14b8a6', hi: '#5eead4', trim: '#eab308' }, // Adventurer Vest
+    { c1: '#475569', c2: '#94a3b8', hi: '#e2e8f0', trim: '#cbd5e1' }, // Iron Mail
+    { c1: '#0284c7', c2: '#38bdf8', hi: '#e0f2fe', trim: '#67e8f9' }, // Crystal Plate
+    { c1: '#7f1d1d', c2: '#dc2626', hi: '#fca5a5', trim: '#facc15' }, // Dragon Scale
+    { c1: '#b45309', c2: '#facc15', hi: '#ffffff', trim: '#38bdf8' }, // Aegis Armor
+  ];
+  armorColors.forEach((a, i) => {
+    const ox = i * 16;
+    surf.rect(ox + 3, 2, 10, 12, '#0f111a');
+    surf.rect(ox + 2, 3, 12, 5, '#0f111a');
+    surf.rect(ox + 4, 3, 8, 10, a.c1);
+    surf.rect(ox + 5, 4, 6, 8, a.c2);
+    surf.rect(ox + 3, 4, 3, 3, a.hi);
+    surf.rect(ox + 10, 4, 3, 3, a.hi);
+    surf.rect(ox + 6, 5, 4, 4, a.trim);
+    surf.rect(ox + 6, 2, 4, 2, '#0f111a'); // collar notch
+  });
+
+  // Row 1: 4 Accessories (Ammo Belt, Crit Ring, Power Gauntlet, Wind Boots)
+  // 0: Ammo Belt
+  surf.rect(2, 16 + 5, 12, 6, '#0f111a');
+  surf.rect(3, 16 + 6, 10, 4, '#92400e');
+  surf.rect(4, 16 + 7, 2, 2, '#facc15');
+  surf.rect(7, 16 + 7, 2, 2, '#facc15');
+  surf.rect(10, 16 + 7, 2, 2, '#facc15');
+  // 1: Crit Ring
+  surf.circle(16 + 8, 16 + 9, 5, '#0f111a');
+  surf.circle(16 + 8, 16 + 9, 4, '#eab308');
+  surf.circle(16 + 8, 16 + 9, 2, '#0f111a');
+  surf.rect(16 + 6, 16 + 2, 4, 4, '#ef4444');
+  surf.set(16 + 7, 16 + 3, '#fecaca');
+  // 2: Power Gauntlet
+  surf.rect(32 + 4, 16 + 3, 8, 10, '#0f111a');
+  surf.rect(32 + 5, 16 + 4, 6, 8, '#dc2626');
+  surf.rect(32 + 5, 16 + 4, 6, 3, '#facc15');
+  surf.rect(32 + 3, 16 + 6, 2, 4, '#991b1b');
+  // 3: Wind Boots
+  surf.rect(48 + 4, 16 + 3, 6, 10, '#0f111a');
+  surf.rect(48 + 4, 16 + 9, 9, 4, '#0f111a');
+  surf.rect(48 + 5, 16 + 4, 4, 8, '#14b8a6');
+  surf.rect(48 + 5, 16 + 10, 7, 2, '#5eead4');
+  surf.line(48 + 9, 16 + 5, 48 + 13, 16 + 3, '#ffffff');
+  surf.line(48 + 9, 16 + 7, 48 + 12, 16 + 6, '#bae6fd');
+
+  surf.save('gear.png');
+}
+
+// ---- 8. ROTATING LARGE SQUARE PORTALS (256 x 64 -> 8 frames x 2 kinds of 32x32) ----
+function buildPortalsSheet() {
+  const surf = new PixelSurface(256, 64);
+  const kinds = [
+    // Row 0: Exit Portal (Emerald / Gold rotating vortex square)
+    { outer: '#facc15', mid: '#22c55e', inner: '#bbf7d0', core: '#ffffff' },
+    // Row 1: Branch Warp Portal (Cyan / Violet rotating vortex square)
+    { outer: '#38bdf8', mid: '#7c3aed', inner: '#e0f2fe', core: '#ffffff' },
+  ];
+  kinds.forEach((k, row) => {
+    for (let f = 0; f < 8; f++) {
+      const ox = f * 32;
+      const oy = row * 32;
+      const ang = (f / 8) * (Math.PI / 2);
+      const cos = Math.cos(ang);
+      const sin = Math.sin(ang);
+      // Draw larger rotating square frame (half-size 12 -> ~26x26 bounding box inside 32x32)
+      for (let y = -14; y <= 14; y++) {
+        for (let x = -14; x <= 14; x++) {
+          const rx = x * cos - y * sin;
+          const ry = x * sin + y * cos;
+          const cheb = Math.max(Math.abs(rx), Math.abs(ry));
+          if (cheb <= 12.2 && cheb >= 9.6) {
+            surf.set(ox + 16 + x, oy + 16 + y, '#0f111a');
+          }
+          if (cheb <= 11.4 && cheb >= 10.2) {
+            surf.set(ox + 16 + x, oy + 16 + y, k.outer);
+          } else if (cheb < 10.2 && cheb >= 5.2) {
+            // Spiral swirl pattern
+            const angle = Math.atan2(y, x) + f * 0.8 + cheb * 0.45;
+            surf.set(ox + 16 + x, oy + 16 + y, Math.sin(angle * 2) > 0 ? k.mid : k.inner);
+          } else if (cheb < 5.2) {
+            surf.set(ox + 16 + x, oy + 16 + y, cheb < 2.2 ? k.core : k.inner);
+          }
+        }
+      }
+    }
+  });
+  surf.save('portals.png');
+}
+
+// ---- 9. 6-BIOME TILESET (160 x 96 -> 10 cols x 6 biome rows of 16x16) ----
+// Biomes: 0=Waterfall, 1=Desert, 2=Snow, 3=Volcano, 4=Galaxy, 5=Graveyard
+const BIOME_PALETTES = [
+  { top: '#22c55e', topH: '#86efac', rock1: '#334155', rock2: '#1e293b', rockH: '#64748b', plat: '#0284c7', accent: '#38bdf8', water1: '#0284c7', water2: '#7dd3fc' }, // 0: Air Terjun
+  { top: '#f59e0b', topH: '#fde68a', rock1: '#b45309', rock2: '#78350f', rockH: '#d97706', plat: '#d97706', accent: '#fef08a', water1: '#0369a1', water2: '#38bdf8' }, // 1: Gurun
+  { top: '#f8fafc', topH: '#ffffff', rock1: '#38bdf8', rock2: '#0369a1', rockH: '#bae6fd', plat: '#0284c7', accent: '#e0f2fe', water1: '#0ea5e9', water2: '#e0f2fe' }, // 2: Salju
+  { top: '#f97316', topH: '#fed7aa', rock1: '#450a0a', rock2: '#271212', rockH: '#7f1d1d', plat: '#b91c1c', accent: '#facc15', water1: '#ea580c', water2: '#fef08a' }, // 3: Vulkano
+  { top: '#a855f7', topH: '#e9d5ff', rock1: '#1e1b4b', rock2: '#0f0d1f', rockH: '#4338ca', plat: '#6366f1', accent: '#22d3ee', water1: '#4f46e5', water2: '#c084fc' }, // 4: Galaxy
+  { top: '#65a30d', topH: '#bef264', rock1: '#374151', rock2: '#1f2937', rockH: '#6b7280', plat: '#4b5563', accent: '#c084fc', water1: '#115e59', water2: '#5eead4' }, // 5: Kuburan
 ];
 
 function buildTilesSheet() {
-  const surf = new PixelSurface(128, 80);
-  WORLD_PALETTES.forEach((p, wIdx) => {
-    const oy = wIdx * 16;
+  const surf = new PixelSurface(160, 96);
+  BIOME_PALETTES.forEach((p, bIdx) => {
+    const oy = bIdx * 16;
     // 0: Solid Ground Top
     surf.rect(0, oy, 16, 16, p.rock2);
     surf.rect(1, oy + 4, 14, 11, p.rock1);
@@ -854,7 +1037,7 @@ function buildTilesSheet() {
     surf.rect(32, oy + 1, 16, 3, p.plat);
     surf.rect(32, oy + 1, 16, 1, p.topH);
 
-    // 3: Ladder
+    // 3: Vertical Ladder
     surf.rect(48 + 3, oy, 2, 16, '#92400e');
     surf.rect(48 + 11, oy, 2, 16, '#92400e');
     surf.rect(48 + 3, oy + 3, 10, 2, '#facc15');
@@ -872,31 +1055,51 @@ function buildTilesSheet() {
     surf.rect(80 + 5, oy, 6, 16, p.rock1);
     surf.rect(80 + 6, oy + 2, 4, 4, p.accent);
 
-    // 6: Accent Block
-    surf.rect(96, oy, 16, 16, '#0f111a');
-    surf.rect(97, oy + 1, 14, 14, p.plat);
-    surf.rect(100, oy + 4, 8, 8, p.accent);
+    // 6: Moving Platform Tile (col 6)
+    surf.rect(96, oy, 16, 8, '#0f111a');
+    surf.rect(97, oy + 1, 14, 6, p.plat);
+    surf.rect(98, oy + 2, 12, 2, p.accent);
+    surf.set(99, oy + 5, '#ffffff');
+    surf.set(108, oy + 5, '#ffffff');
 
-    // 7: Exit Gate Frame
-    surf.rect(112, oy, 16, 16, p.rock2);
-    surf.rect(114, oy + 2, 12, 14, p.accent);
+    // 7: Overhead Horizontal Monkey Bar / Climb Rail (col 7)
+    surf.rect(112, oy + 2, 16, 4, '#0f111a');
+    surf.rect(112, oy + 3, 16, 2, '#facc15');
+    surf.rect(114, oy + 1, 2, 6, '#94a3b8');
+    surf.rect(122, oy + 1, 2, 6, '#94a3b8');
+
+    // 8: Water Surface (col 8) & 9: Deep Water (col 9)
+    surf.rect(128, oy + 3, 16, 13, p.water1);
+    surf.rect(128, oy + 2, 16, 3, p.water2);
+    surf.rect(130, oy + 2, 4, 1, '#ffffff');
+    surf.rect(138, oy + 3, 4, 1, '#ffffff');
+    surf.rect(144, oy, 16, 16, p.water1);
+    surf.rect(147, oy + 4, 3, 1, p.water2);
+    surf.rect(153, oy + 10, 3, 1, p.water2);
   });
   surf.save('tiles.png');
 }
 
-// ---- 7. PARALLAX BACKGROUNDS (256 x 1200 -> 5 worlds of 256x240 native 1:1 resolution) ----
+// ---- 10. 6-BIOME PARALLAX BACKGROUNDS (256 x 1440) ----
 function buildBackgroundsSheet() {
-  const surf = new PixelSurface(256, 1200);
+  const surf = new PixelSurface(256, 1440);
   const bgConfigs = [
-    { sky1: '#0b132b', sky2: '#1c2541', sky3: '#2b4570', moon: '#fef08a', hill1: '#14532d', hill2: '#166534', star: '#bae6fd' },
-    { sky1: '#07152e', sky2: '#0f2d59', sky3: '#0e7490', moon: '#a5f3fc', hill1: '#1e3a8a', hill2: '#1d4ed8', star: '#e0f2fe' },
-    { sky1: '#1c0707', sky2: '#450a0a', sky3: '#9a3412', moon: '#fb923c', hill1: '#450a0a', hill2: '#7c2d12', star: '#fde047' },
-    { sky1: '#0c0a24', sky2: '#1e1b4b', sky3: '#3730a3', moon: '#fef08a', hill1: '#1e1b4b', hill2: '#4338ca', star: '#c7d2fe' },
-    { sky1: '#070510', sky2: '#2e1065', sky3: '#581c87', moon: '#f43f5e', hill1: '#1e1b4b', hill2: '#6b21a8', star: '#fbcfe8' },
+    // 0: Air Terjun (Waterfall)
+    { kind: 'waterfall', sky1: '#071b24', sky2: '#0f3847', sky3: '#155e75', moon: '#fef08a', hill1: '#14532d', hill2: '#166534', star: '#bae6fd' },
+    // 1: Gurun (Desert)
+    { kind: 'desert', sky1: '#451a03', sky2: '#92400e', sky3: '#d97706', moon: '#fef08a', hill1: '#b45309', hill2: '#f59e0b', star: '#fde68a' },
+    // 2: Salju (Snow)
+    { kind: 'snow', sky1: '#082f49', sky2: '#0369a1', sky3: '#38bdf8', moon: '#f8fafc', hill1: '#1e3a8a', hill2: '#e0f2fe', star: '#ffffff' },
+    // 3: Vulkano (Volcano)
+    { kind: 'volcano', sky1: '#1c0707', sky2: '#450a0a', sky3: '#9a3412', moon: '#fb923c', hill1: '#271212', hill2: '#7f1d1d', star: '#fde047' },
+    // 4: Galaxy
+    { kind: 'galaxy', sky1: '#040312', sky2: '#1e1b4b', sky3: '#4c1d95', moon: '#c084fc', hill1: '#1e1b4b', hill2: '#312e81', star: '#e0f2fe' },
+    // 5: Kuburan (Graveyard)
+    { kind: 'graveyard', sky1: '#090717', sky2: '#1f1638', sky3: '#312e59', moon: '#e2e8f0', hill1: '#111827', hill2: '#1f2937', star: '#cbd5e1' },
   ];
+
   bgConfigs.forEach((cfg, idx) => {
     const oy = idx * 240;
-    // Smooth GBC dithered sky bands
     for (let y = 0; y < 240; y++) {
       for (let x = 0; x < 256; x++) {
         let col = cfg.sky1;
@@ -907,32 +1110,82 @@ function buildBackgroundsSheet() {
         surf.set(x, oy + y, col);
       }
     }
-    // Pixel crescent / orb moon
-    surf.circle(204, oy + 42, 11, cfg.moon);
-    surf.circle(208, oy + 39, 9, cfg.sky1);
 
-    // Pseudo-random scattered stars (no horizontal banding)
+    // Sky celestial body (Sun/Moon/Ringed Planet)
+    if (cfg.kind === 'desert') {
+      surf.circle(202, oy + 44, 13, '#fde047');
+    } else if (cfg.kind === 'galaxy') {
+      surf.circle(196, oy + 46, 12, '#a855f7');
+      surf.line(176, oy + 52, 216, oy + 40, '#38bdf8');
+      surf.line(178, oy + 53, 214, oy + 41, '#e0f2fe');
+    } else if (cfg.kind === 'graveyard') {
+      surf.circle(204, oy + 42, 13, '#f1f5f9');
+    } else {
+      surf.circle(204, oy + 42, 11, cfg.moon);
+      surf.circle(208, oy + 39, 9, cfg.sky1);
+    }
+
+    // Stars / Snowflakes / Embers
     let seed = (idx + 1) * 4919;
-    for (let i = 0; i < 34; i++) {
+    const starCount = cfg.kind === 'galaxy' ? 68 : 34;
+    for (let i = 0; i < starCount; i++) {
       seed = (seed * 1664525 + 1013904223) >>> 0;
       const sx = seed % 256;
       seed = (seed * 1664525 + 1013904223) >>> 0;
-      const sy = oy + 8 + (seed % 96);
+      const sy = oy + 8 + (seed % 110);
       surf.set(sx, sy, cfg.star);
     }
 
-    // Distant mountains / ruins + foreground rolling hills (seamless across 256px)
+    // Biome-specific horizon features
+    if (cfg.kind === 'desert') {
+      // Pyramids
+      for (let p = 0; p < 2; p++) {
+        const px = 40 + p * 120;
+        const size = p === 0 ? 48 : 36;
+        for (let r = 0; r < size; r++) {
+          surf.rect(px - r, oy + 170 + r, r * 2 + 1, 1, r % 4 === 0 ? '#92400e' : '#b45309');
+        }
+      }
+    } else if (cfg.kind === 'volcano') {
+      // Volcano peak + glowing crater
+      for (let r = 0; r < 64; r++) {
+        const half = 12 + r;
+        surf.rect(128 - half, oy + 140 + r, half * 2, 1, '#271212');
+      }
+      surf.rect(116, oy + 138, 24, 4, '#f97316');
+      surf.rect(120, oy + 136, 16, 3, '#fef08a');
+    }
+
+    // Hills / Cliffs
     for (let x = 0; x < 256; x++) {
       const h1 = Math.round(68 + Math.sin((x / 256) * Math.PI * 4) * 20 + Math.cos((x / 256) * Math.PI * 8) * 9);
       surf.rect(x, oy + 240 - h1, 1, h1, cfg.hill1);
       const h2 = Math.round(42 + Math.sin((x / 256) * Math.PI * 6 + 1.2) * 12);
       surf.rect(x, oy + 240 - h2, 1, h2, cfg.hill2);
     }
+
+    if (cfg.kind === 'waterfall') {
+      // Cascading pixel waterfall columns
+      for (const wx of [54, 178]) {
+        surf.rect(wx, oy + 150, 18, 90, '#0284c7');
+        surf.rect(wx + 3, oy + 150, 4, 90, '#7dd3fc');
+        surf.rect(wx + 11, oy + 152, 3, 88, '#e0f2fe');
+        surf.rect(wx - 2, oy + 232, 22, 6, '#e0f2fe');
+      }
+    } else if (cfg.kind === 'graveyard') {
+      // Tombstones & crosses
+      for (const tx of [28, 76, 134, 210]) {
+        surf.rect(tx, oy + 188, 10, 14, '#4b5563');
+        surf.rect(tx + 2, oy + 186, 6, 2, '#6b7280');
+        surf.rect(tx + 4, oy + 190, 2, 7, '#1f2937');
+        surf.rect(tx + 2, oy + 192, 6, 2, '#1f2937');
+      }
+    }
   });
   surf.save('backgrounds.png');
 }
 
-// ---- 8. 10 GUNS & PROJECTILES (160 x 32 -> row 0: 10 gun icons, row 1: 10 projectile sprites) ----
+// ---- 11. 10 GUNS & PROJECTILES ----
 const GUN_PALETTES = [
   { body: '#64748b', hi: '#cbd5e1', core: '#38bdf8', grip: '#78350f', shot: '#facc15', shotCore: '#ffffff', shotgun: false },
   { body: '#1d4ed8', hi: '#93c5fd', core: '#facc15', grip: '#1e293b', shot: '#38bdf8', shotCore: '#e0f2fe', shotgun: false },
@@ -950,30 +1203,24 @@ function buildGunsSheet() {
   const surf = new PixelSurface(160, 32);
   GUN_PALETTES.forEach((g, idx) => {
     const ox = idx * 16;
-    // Row 0: 16x16 Gun Icon
     const barrelLen = g.shotgun ? 10 : idx >= 6 ? 12 : 9;
     const barrelH = g.shotgun ? 4 : idx >= 6 ? 4 : 3;
     surf.rect(ox + 2, 5, barrelLen + 1, barrelH + 2, '#0f111a');
     surf.rect(ox + 3, 6, barrelLen - 1, barrelH, g.body);
     surf.rect(ox + 3, 6, barrelLen - 1, 1, g.hi);
-    // Core glow
     surf.rect(ox + 5, 7, 2, 2, g.core);
-    // Grip
     surf.rect(ox + 3, 9, 4, 5, '#0f111a');
     surf.rect(ox + 4, 9, 2, 4, g.grip);
     if (g.shotgun) {
-      // Double under-barrel pump
       surf.rect(ox + 7, 10, 5, 2, g.grip);
     }
 
-    // Row 1 (y=16): 16x16 Projectile Sprite
     const py = 16;
     if (g.shotgun) {
       surf.circle(ox + 8, py + 8, 3, '#0f111a');
       surf.circle(ox + 8, py + 8, 2, g.shot);
       surf.set(ox + 8, py + 8, g.shotCore);
     } else if (idx === 9) {
-      // Infinite Omega Beam Bolt
       surf.rect(ox + 1, py + 5, 14, 6, '#0f111a');
       surf.rect(ox + 2, py + 6, 12, 4, g.shot);
       surf.rect(ox + 3, py + 7, 10, 2, g.shotCore);
@@ -988,10 +1235,13 @@ function buildGunsSheet() {
 
 buildHeroSheet();
 buildSwordsSheet();
-buildEnemiesSheet();
+buildKerocoEnemiesSheet();
+buildBossesSheet();
+buildLegacyEnemiesSheet();
 buildItemsVfxSheet();
 buildMenuIconsSheet();
+buildGearIconsSheet();
+buildPortalsSheet();
 buildTilesSheet();
 buildBackgroundsSheet();
 buildGunsSheet();
-

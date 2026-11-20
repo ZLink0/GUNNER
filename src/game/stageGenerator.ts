@@ -1,24 +1,39 @@
-import { EnemyKind, SwordId } from './types';
+import {
+  BossDef,
+  KerocoBehavior,
+  getBossForStage,
+  getKerocoForBiome,
+} from './enemyCatalog';
+import { BIOMES, BiomeDef, BiomeId, EnemyKind, SwordId } from './types';
 
 export const TILE_SIZE = 16;
 export const STAGE_ROWS = 15; // 15 * 16 = 240px playfield height (plus 16px HUD = 256x256 square)
 export const CANVAS_SIZE = 256;
 export const HUD_BAR_HEIGHT = 16;
 export const PORTALS_PER_STAGE = 5;
+export const KILLS_TO_OPEN_EXIT = 5;
 
 // Tile codes:
 // 0 = empty
 // 1 = solid ground top
 // 2 = solid brick fill
 // 3 = one-way platform
-// 4 = ladder
+// 4 = vertical ladder (up/down)
 // 5 = spikes hazard
 // 6 = deco pillar
-export type TileType = 0 | 1 | 2 | 3 | 4 | 5 | 6;
+// 7 = horizontal monkey bar / overhead climb rail (left/right hangClimb)
+// 8 = water obstacle pool
+export type TileType = 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8;
 
 export interface EnemySpawn {
   id: number;
   kind: EnemyKind;
+  kerocoId?: string;
+  bossDef?: BossDef;
+  name: string;
+  enemyLevel: number;
+  spriteRow: number; // 0..39 for keroco, 0..10 for boss
+  behavior: KerocoBehavior | 'boss';
   x: number;
   y: number;
   hp: number;
@@ -37,8 +52,32 @@ export interface ChestSpawn {
   swordReward?: SwordId;
 }
 
+export interface MovingPlatformSpawn {
+  id: number;
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  axis: 'x' | 'y';
+  minPos: number;
+  maxPos: number;
+  speed: number;
+  phase: number;
+}
+
+export interface AreaPortal {
+  id: number;
+  x: number;
+  y: number;
+  kind: 'warp' | 'exit';
+  targetPortalId?: number;
+  requiredKills: number;
+}
+
 export interface StageArea {
   areaIndex: number; // 0..4 (Portal 1..5)
+  biomeIndex: number; // 0..5
+  biomeId: BiomeId;
   isBossArea: boolean;
   cols: number;
   rows: number;
@@ -47,6 +86,8 @@ export interface StageArea {
   spawnY: number;
   portalX: number;
   portalY: number;
+  portals: AreaPortal[];
+  movingPlatforms: MovingPlatformSpawn[];
   enemies: EnemySpawn[];
   chests: ChestSpawn[];
 }
@@ -54,8 +95,9 @@ export interface StageArea {
 export interface StageData {
   stageNumber: number; // 1..100
   worldIndex: number; // 0..4
+  biome: BiomeDef;
   isBossStage: boolean;
-  areas: StageArea[]; // Always 5 areas with 5 portals
+  areas: StageArea[]; // Always 5 areas with 5 exit portals
 }
 
 function mulberry32(seed: number) {
@@ -74,209 +116,375 @@ export function getWorldIndexForStage(stageNumber: number): number {
   return Math.floor((clamped - 1) / 20);
 }
 
+export function getBiomeForStage(stageNumber: number): BiomeDef {
+  const clamped = Math.max(1, Math.min(100, stageNumber));
+  return BIOMES[(clamped - 1) % BIOMES.length];
+}
+
+function mapBehaviorToKind(behavior: KerocoBehavior): EnemyKind {
+  switch (behavior) {
+    case 'slime':
+    case 'crawler':
+      return 'slime';
+    case 'bat':
+    case 'ghost':
+      return 'bat';
+    case 'trooper':
+    case 'mage':
+      return 'trooper';
+    case 'knight':
+    case 'skeleton':
+    case 'golem':
+      return 'knight';
+    case 'turret':
+      return 'turret';
+  }
+}
+
 function generateArea(
   stage: number,
-  worldIndex: number,
+  biome: BiomeDef,
   areaIndex: number,
-  isBossStage: boolean,
+  isBossArea: boolean,
 ): StageArea {
-  const isBossArea = isBossStage && areaIndex === PORTALS_PER_STAGE - 1;
-  const rng = mulberry32(stage * 9773 + worldIndex * 313 + areaIndex * 1997);
+  const rng = mulberry32(stage * 9973 + areaIndex * 1307 + 7919);
+  const cols = isBossArea ? 44 : 68 + Math.min(16, Math.floor(stage / 6)) + (areaIndex % 2) * 4;
+  const tiles: TileType[][] = Array.from({ length: STAGE_ROWS }, () =>
+    Array<TileType>(cols).fill(0),
+  );
 
-  const cols = isBossArea ? 38 : Math.min(76, 56 + Math.floor(stage * 0.18) + areaIndex * 2);
-  const rows = STAGE_ROWS;
-  const tiles: TileType[][] = Array.from({ length: rows }, () => Array<TileType>(cols).fill(0));
+  const groundRow = 11; // y = 176..239
 
-  const groundRow = rows - 2;
-  for (let c = 0; c < cols; c++) {
-    tiles[groundRow][c] = 1;
-    tiles[groundRow + 1][c] = 2;
-  }
-
-  const safeStartEnd = 10;
-  const safeGoalStart = isBossArea ? cols - 18 : cols - 8;
-
-  if (!isBossArea) {
-    let c = safeStartEnd;
-    while (c < safeGoalStart - 3) {
-      const roll = rng();
-      if (roll < 0.22 && c > safeStartEnd + 2) {
-        const pitW = 2;
-        for (let pc = c; pc < c + pitW && pc < safeGoalStart; pc++) {
-          tiles[groundRow][pc] = 0;
-          tiles[groundRow + 1][pc] = 0;
-        }
-        tiles[groundRow - 2][c] = 3;
-        tiles[groundRow - 2][c + 1] = 3;
-        c += pitW + 4;
-      } else if (roll < 0.44 && (stage >= 2 || areaIndex >= 1)) {
-        const spW = stage > 15 && rng() > 0.5 ? 2 : 1;
-        for (let sc = c; sc < c + spW; sc++) {
-          tiles[groundRow - 1][sc] = 5;
-        }
-        tiles[groundRow - 4][Math.max(safeStartEnd, c - 1)] = 3;
-        tiles[groundRow - 4][c] = 3;
-        tiles[groundRow - 4][c + 1] = 3;
-        c += spW + 4;
-      } else if (roll < 0.74) {
-        const platW = 4 + Math.floor(rng() * 3);
-        const platRow = groundRow - 3 - Math.floor(rng() * 2);
-        for (let pc = c; pc < c + platW && pc < safeGoalStart; pc++) {
-          tiles[platRow][pc] = 3;
-        }
-        const ladderCol = c;
-        for (let lr = platRow; lr < groundRow; lr++) {
-          tiles[lr][ladderCol] = 4;
-        }
-        if (rng() > 0.45 && platRow >= 6) {
-          for (let pc = c + 1; pc < c + platW - 1 && pc < safeGoalStart; pc++) {
-            tiles[platRow - 3][pc] = 3;
-          }
-        }
-        c += platW + 3;
-      } else {
-        tiles[groundRow - 1][c] = 6;
-        c += 4;
-      }
+  const setSolidFloor = (c: number, row = groundRow) => {
+    if (c < 0 || c >= cols) return;
+    tiles[row][c] = 1;
+    for (let r = row + 1; r < STAGE_ROWS; r++) {
+      tiles[r][c] = 2;
     }
-  } else {
-    // Boss arena
-    for (let pc = 6; pc <= 10; pc++) tiles[groundRow - 3][pc] = 3;
-    tiles[groundRow - 3][6] = 4;
-    tiles[groundRow - 2][6] = 4;
-    tiles[groundRow - 1][6] = 4;
-    for (let pc = cols - 13; pc <= cols - 9; pc++) tiles[groundRow - 3][pc] = 3;
+  };
+
+  // Start safe zone: cols 0..9
+  for (let c = 0; c <= 9; c++) {
+    setSolidFloor(c, groundRow);
+  }
+  if (stage === 1 && areaIndex === 0) {
+    tiles[groundRow - 1][6] = 6;
   }
 
-  const spawnX = 2 * TILE_SIZE + 8;
-  const spawnY = groundRow * TILE_SIZE;
-  const portalX = (cols - 4) * TILE_SIZE;
-  const portalY = groundRow * TILE_SIZE;
-
-  const enemies: EnemySpawn[] = [];
-  let eid = areaIndex * 100 + 1;
-  const hpScale = 1 + (stage - 1) * 0.24 + areaIndex * 0.06;
-  const atkScale = 1 + (stage - 1) * 0.18;
-  const nonBossKinds: EnemyKind[] = ['slime', 'bat', 'trooper', 'knight', 'turret'];
+  const movingPlatforms: MovingPlatformSpawn[] = [];
+  let nextPlatId = 1;
+  const enemySpots: { col: number; row: number; aerial?: boolean }[] = [];
 
   if (isBossArea) {
-    enemies.push({
-      id: eid++,
-      kind: 'slime',
-      x: 12 * TILE_SIZE,
-      y: groundRow * TILE_SIZE,
-      hp: Math.round(24 * hpScale),
-      atk: Math.round(6 * atkScale),
-      speed: 28,
-      expReward: Math.round(14 + stage * 3),
-      goldReward: Math.round(12 + stage * 2),
-    });
-    enemies.push({
-      id: eid++,
-      kind: 'bat',
-      x: 16 * TILE_SIZE,
-      y: (groundRow - 5) * TILE_SIZE,
-      hp: Math.round(22 * hpScale),
-      atk: Math.round(7 * atkScale),
-      speed: 44,
-      expReward: Math.round(16 + stage * 3),
-      goldReward: Math.round(14 + stage * 2),
-    });
-    enemies.push({
-      id: eid++,
-      kind: 'boss',
-      x: (cols - 9) * TILE_SIZE,
-      y: groundRow * TILE_SIZE,
-      hp: Math.round(165 * hpScale),
-      atk: Math.round(13 * atkScale),
-      speed: 46 + Math.min(24, stage * 0.25),
-      expReward: Math.round(90 + stage * 14),
-      goldReward: Math.round(95 + stage * 12),
-    });
+    // Boss Arena + approach platform & overhead monkey bar
+    for (let c = 0; c < cols; c++) {
+      setSolidFloor(c, groundRow);
+    }
+    for (let c = 12; c <= 16; c++) tiles[8][c] = 3;
+    for (let c = 26; c <= 31; c++) tiles[8][c] = 3;
+    for (let c = 18; c <= 24; c++) tiles[5][c] = 7; // overhead monkey bar in boss arena!
+    tiles[9][12] = 4;
+    tiles[10][12] = 4;
   } else {
-    const enemyBudget = Math.min(14, 6 + Math.floor(stage * 0.12) + areaIndex);
-    const stepCols = Math.max(3, Math.floor((safeGoalStart - safeStartEnd) / enemyBudget));
-    for (let i = 0; i < enemyBudget; i++) {
-      const col = safeStartEnd + 1 + i * stepCols + Math.floor(rng() * 2);
-      if (col >= safeGoalStart) break;
-      const hasFloor = tiles[groundRow][col] === 1 && tiles[groundRow - 1][col] !== 5;
-      const poolIndex = Math.min(
-        nonBossKinds.length - 1,
-        Math.floor(rng() * (stage < 2 && areaIndex < 2 ? 3 : nonBossKinds.length)),
-      );
-      const kind: EnemyKind = hasFloor ? nonBossKinds[poolIndex] : 'bat';
-      const y =
-        kind === 'bat'
-          ? (groundRow - 4 - Math.floor(rng() * 3)) * TILE_SIZE
-          : groundRow * TILE_SIZE;
+    // Roguelike branching terrain across cols 10..(cols - 10)
+    let c = 10;
+    while (c < cols - 10) {
+      const roll = rng();
 
-      const baseHp =
-        kind === 'slime' ? 20 : kind === 'bat' ? 16 : kind === 'trooper' ? 26 : kind === 'knight' ? 40 : 32;
-      const baseAtk =
-        kind === 'slime' ? 5 : kind === 'bat' ? 6 : kind === 'trooper' ? 7 : kind === 'knight' ? 10 : 8;
-      const baseSpeed =
-        kind === 'slime' ? 28 : kind === 'bat' ? 44 : kind === 'trooper' ? 24 : kind === 'knight' ? 22 : 0;
+      if (roll < 0.24 && c + 8 < cols - 10) {
+        // Branch Segment A: Water pool obstacle with overhead monkey bars + horizontal moving platform!
+        const poolLen = 5;
+        // Solid basin floor at row 13..14, water at rows 11..12
+        for (let wc = c; wc < c + poolLen; wc++) {
+          tiles[11][wc] = 8;
+          tiles[12][wc] = 8;
+          tiles[13][wc] = 1;
+          tiles[14][wc] = 2;
+        }
+        // Overhead monkey bars (tile 7) at row 6 so player can hang-climb across!
+        for (let mc = c - 1; mc <= c + poolLen; mc++) {
+          tiles[6][mc] = 7;
+        }
+        // Stepping ledge or ladder up to monkey bar on left
+        tiles[8][c - 1] = 3;
+        tiles[9][c - 1] = 4;
+        tiles[10][c - 1] = 4;
+        // Horizontal moving platform across the water pool
+        movingPlatforms.push({
+          id: nextPlatId++,
+          x: c * TILE_SIZE,
+          y: 9 * TILE_SIZE,
+          w: 32,
+          h: 8,
+          axis: 'x',
+          minPos: c * TILE_SIZE,
+          maxPos: (c + poolLen - 2) * TILE_SIZE,
+          speed: 32 + Math.min(20, stage * 0.2),
+          phase: rng() * Math.PI * 2,
+        });
+        c += poolLen;
+        setSolidFloor(c, groundRow);
+        setSolidFloor(c + 1, groundRow);
+        c += 2;
+      } else if (roll < 0.48 && c + 9 < cols - 10) {
+        // Branch Segment B: Vertical Lift + Upper/Lower Dual Roguelike Paths
+        const segLen = 8;
+        for (let sc = c; sc < c + segLen; sc++) {
+          setSolidFloor(sc, groundRow);
+        }
+        // Upper branch platform at row 5
+        for (let uc = c + 1; uc < c + segLen - 1; uc++) {
+          tiles[5][uc] = 3;
+        }
+        // Vertical ladder on left side connecting row 5..10
+        for (let lr = 5; lr <= 10; lr++) {
+          tiles[lr][c + 1] = 4;
+        }
+        // Vertical moving platform on right side (up-down)
+        movingPlatforms.push({
+          id: nextPlatId++,
+          x: (c + segLen - 2) * TILE_SIZE,
+          y: 7 * TILE_SIZE,
+          w: 32,
+          h: 8,
+          axis: 'y',
+          minPos: 5 * TILE_SIZE,
+          maxPos: 10 * TILE_SIZE,
+          speed: 28 + Math.min(18, stage * 0.15),
+          phase: rng() * Math.PI * 2,
+        });
+        enemySpots.push({ col: c + 3, row: 5 });
+        enemySpots.push({ col: c + 4, row: groundRow });
+        c += segLen;
+      } else if (roll < 0.70 && c + 7 < cols - 10) {
+        // Branch Segment C: Monkey Bar Corridor + Spikes/Water below
+        const segLen = 6;
+        for (let sc = c; sc < c + segLen; sc++) {
+          setSolidFloor(sc, groundRow);
+          if (sc >= c + 1 && sc <= c + segLen - 2 && rng() < 0.5) {
+            tiles[groundRow - 1][sc] = 5; // hazard spikes below bar
+          }
+          tiles[6][sc] = 7; // horizontal monkey bar
+        }
+        tiles[8][c] = 3;
+        tiles[9][c] = 4;
+        tiles[10][c] = 4;
+        enemySpots.push({ col: c + 3, row: 4, aerial: true });
+        c += segLen;
+      } else {
+        // Branch Segment D: Standard elevated plateau + platform
+        const segLen = 5;
+        const elev = rng() < 0.45 ? 10 : groundRow;
+        for (let sc = c; sc < c + segLen; sc++) {
+          setSolidFloor(sc, elev);
+        }
+        if (rng() < 0.65) {
+          for (let pc = c + 1; pc < c + segLen - 1; pc++) tiles[7][pc] = 3;
+          enemySpots.push({ col: c + 2, row: 7 });
+        }
+        enemySpots.push({ col: c + 3, row: elev });
+        c += segLen;
+      }
+    }
 
-      enemies.push({
-        id: eid++,
-        kind,
-        x: col * TILE_SIZE + 8,
-        y,
-        hp: Math.round(baseHp * hpScale),
-        atk: Math.round(baseAtk * atkScale),
-        speed: baseSpeed,
-        expReward: Math.round(14 + stage * 3.5),
-        goldReward: Math.round(10 + stage * 2.5),
-      });
+    // Far end safe zone
+    for (let fc = cols - 10; fc < cols; fc++) {
+      setSolidFloor(fc, groundRow);
+    }
+    // High branch platform at far end (for alternate Exit Portal placement!)
+    for (let uc = cols - 12; uc <= cols - 4; uc++) {
+      tiles[5][uc] = 3;
+    }
+    for (let lr = 5; lr <= 10; lr++) {
+      tiles[lr][cols - 11] = 4;
     }
   }
 
+  // Seal solid borders
+  for (let r = 0; r < STAGE_ROWS; r++) {
+    tiles[r][0] = 2;
+    tiles[r][cols - 1] = 2;
+  }
+
+  // Guarantee clean spawn space
+  const spawnCol = 3;
+  for (let c = spawnCol - 1; c <= spawnCol + 2; c++) {
+    setSolidFloor(c, groundRow);
+    tiles[groundRow - 1][c] = 0;
+    tiles[groundRow - 2][c] = 0;
+  }
+
+  // Build Portals: multiple portals per area (2 Branch Warp Portals + 1 Exit Portal)
+  const portals: AreaPortal[] = [];
+  let exitCol = cols - 4;
+  let exitRow = groundRow;
+
+  if (isBossArea) {
+    exitCol = cols - 5;
+    exitRow = groundRow;
+    portals.push({
+      id: 0,
+      x: exitCol * TILE_SIZE + 8,
+      y: exitRow * TILE_SIZE,
+      kind: 'exit',
+      requiredKills: 0, // Boss defeat unlocks final exit
+    });
+  } else {
+    // Vary exit branch location (either upper platform or far ground)
+    const upperExit = rng() < 0.45;
+    if (upperExit) {
+      exitCol = cols - 6;
+      exitRow = 5;
+    } else {
+      exitCol = cols - 4;
+      exitRow = groundRow;
+    }
+
+    // Two paired Branch Warp Portals so players can traverse branching paths
+    const warpACol = Math.floor(cols * 0.28);
+    const warpBCol = Math.floor(cols * 0.66);
+    setSolidFloor(warpACol, groundRow);
+    setSolidFloor(warpACol + 1, groundRow);
+    for (let wc = warpBCol - 1; wc <= warpBCol + 2; wc++) tiles[5][wc] = 3;
+    tiles[6][warpBCol] = 4;
+    tiles[7][warpBCol] = 4;
+    tiles[8][warpBCol] = 4;
+
+    portals.push(
+      {
+        id: 0,
+        x: warpACol * TILE_SIZE + 8,
+        y: groundRow * TILE_SIZE,
+        kind: 'warp',
+        targetPortalId: 1,
+        requiredKills: 0,
+      },
+      {
+        id: 1,
+        x: warpBCol * TILE_SIZE + 8,
+        y: 5 * TILE_SIZE,
+        kind: 'warp',
+        targetPortalId: 0,
+        requiredKills: 0,
+      },
+      {
+        id: 2,
+        x: exitCol * TILE_SIZE + 8,
+        y: exitRow * TILE_SIZE,
+        kind: 'exit',
+        requiredKills: KILLS_TO_OPEN_EXIT,
+      },
+    );
+  }
+
+  // Populate enemies: >= 7 varied keroco from the 40-enemy catalog
+  const enemies: EnemySpawn[] = [];
+  let nextEnemyId = 1;
+  const stageScale = 1 + (stage - 1) * 0.22 + areaIndex * 0.08;
+  const enemyLvl = Math.max(1, Math.min(100, stage + areaIndex));
+
+  // Ensure enough ground/aerial spots exist
+  for (let col = 12; col < cols - 8; col += 7) {
+    if (enemySpots.length >= 9) break;
+    let floorRow = groundRow;
+    for (let r = 4; r < STAGE_ROWS - 1; r++) {
+      if (tiles[r][col] === 1 || tiles[r][col] === 3) {
+        floorRow = r;
+        break;
+      }
+    }
+    if (tiles[floorRow][col] !== 8 && tiles[floorRow - 1][col] !== 5) {
+      enemySpots.push({ col, row: floorRow });
+    }
+  }
+
+  const minEnemies = isBossArea ? 2 : 7;
+  for (let i = 0; i < Math.max(minEnemies, Math.min(10, enemySpots.length)); i++) {
+    const spot = enemySpots[i % enemySpots.length];
+    const col = Math.max(11, Math.min(cols - 6, spot.col));
+    const kDef = getKerocoForBiome(biome.id, rng, i % 3 === 2);
+    const kind = mapBehaviorToKind(kDef.behavior);
+    const hp = Math.round((16 + stage * 5) * stageScale * kDef.hpMult * 0.48);
+    const atk = Math.round((4 + stage * 1.1) * kDef.atkMult);
+    const yPos = spot.aerial ? spot.row * TILE_SIZE - 8 : spot.row * TILE_SIZE;
+
+    enemies.push({
+      id: nextEnemyId++,
+      kind,
+      kerocoId: kDef.id,
+      name: kDef.name,
+      enemyLevel: enemyLvl,
+      spriteRow: kDef.spriteRow,
+      behavior: kDef.behavior,
+      x: col * TILE_SIZE + 8,
+      y: yPos,
+      hp,
+      atk,
+      speed: kDef.speed,
+      expReward: Math.round(12 + stage * 4.5 + areaIndex * 3),
+      goldReward: Math.round(7 + stage * 2.2),
+    });
+  }
+
+  // Boss spawn in final Boss Area
+  if (isBossArea) {
+    const bossDef = getBossForStage(stage);
+    enemies.push({
+      id: nextEnemyId++,
+      kind: 'boss',
+      bossDef,
+      name: bossDef.name,
+      enemyLevel: Math.min(100, stage + 4),
+      spriteRow: bossDef.spriteRow,
+      behavior: 'boss',
+      x: (cols - 12) * TILE_SIZE,
+      y: groundRow * TILE_SIZE,
+      hp: Math.round((165 + stage * 36) * bossDef.hpMult),
+      atk: Math.round((8 + stage * 1.65) * bossDef.atkMult),
+      speed: bossDef.speed,
+      expReward: Math.round(90 + stage * 24),
+      goldReward: Math.round(70 + stage * 14),
+    });
+  }
+
+  // Chests along branches
   const chests: ChestSpawn[] = [];
   if (!isBossArea) {
-    let chestCol = Math.floor(cols * 0.55);
+    const chestCol = Math.min(cols - 12, Math.max(14, Math.floor(cols * 0.52)));
     let chestRow = groundRow;
-    for (let r = 4; r < groundRow; r++) {
-      for (let c = Math.floor(cols * 0.35); c < Math.floor(cols * 0.8); c++) {
-        if (tiles[r][c] === 3) {
-          chestCol = c;
-          chestRow = r;
-          break;
-        }
+    for (let r = 4; r < STAGE_ROWS - 1; r++) {
+      if (tiles[r][chestCol] === 1 || tiles[r][chestCol] === 3) {
+        chestRow = r;
+        break;
       }
-      if (chestRow !== groundRow) break;
     }
-    if (tiles[chestRow][chestCol] === 0) {
-      tiles[groundRow][chestCol] = 1;
-      tiles[groundRow + 1][chestCol] = 2;
-      chestRow = groundRow;
-    }
-    const specialSword: SwordId | undefined =
-      stage === 12 && areaIndex === 2
-        ? 'thunder_sword'
-        : stage === 32 && areaIndex === 3
-          ? 'great_sword'
-          : undefined;
-
+    let swordReward: SwordId | undefined;
+    if (stage === 12 && areaIndex === 2) swordReward = 'thunder_sword';
+    if (stage === 32 && areaIndex === 3) swordReward = 'great_sword';
     chests.push({
-      id: areaIndex + 1,
+      id: areaIndex * 10 + 1,
       x: chestCol * TILE_SIZE + 8,
       y: chestRow * TILE_SIZE,
-      crystals: 2 + Math.floor(stage / 15),
-      gold: 35 + stage * 4,
-      swordReward: specialSword,
+      crystals: 2 + Math.floor(stage / 10),
+      gold: 25 + stage * 5,
+      swordReward,
     });
   }
 
   return {
     areaIndex,
+    biomeIndex: biome.index,
+    biomeId: biome.id,
     isBossArea,
     cols,
-    rows,
+    rows: STAGE_ROWS,
     tiles,
-    spawnX,
-    spawnY,
-    portalX,
-    portalY,
+    spawnX: spawnCol * TILE_SIZE + 8,
+    spawnY: groundRow * TILE_SIZE,
+    portalX: exitCol * TILE_SIZE + 8,
+    portalY: exitRow * TILE_SIZE,
+    portals,
+    movingPlatforms,
     enemies,
     chests,
   };
@@ -285,14 +493,19 @@ function generateArea(
 export function generateStage(stageNumber: number): StageData {
   const stage = Math.max(1, Math.min(100, Math.round(stageNumber)));
   const worldIndex = getWorldIndexForStage(stage);
+  const biome = getBiomeForStage(stage);
   const isBossStage = stage % 5 === 0;
-  const areas = Array.from({ length: PORTALS_PER_STAGE }, (_, idx) =>
-    generateArea(stage, worldIndex, idx, isBossStage),
-  );
+
+  const areas: StageArea[] = [];
+  for (let a = 0; a < PORTALS_PER_STAGE; a++) {
+    const isBossArea = isBossStage && a === PORTALS_PER_STAGE - 1;
+    areas.push(generateArea(stage, biome, a, isBossArea));
+  }
 
   return {
     stageNumber: stage,
     worldIndex,
+    biome,
     isBossStage,
     areas,
   };

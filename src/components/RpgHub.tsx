@@ -4,8 +4,10 @@ import {
   buyShopItem,
   claimQuestReward,
   computeHeroStats,
+  craftArmor,
   craftGun,
   craftSword,
+  getArmorDef,
   getExpForNextLevel,
   getGunDef,
   getNextAmmoUpgradeTier,
@@ -13,10 +15,12 @@ import {
   getSwordDef,
   getSwordUpgradeCost,
   isQuestComplete,
+  upgradeArmor,
   upgradeGun,
   upgradeSword,
 } from '../game/rpgLogic';
 import { ExtractedUiIcons } from '../game/spriteAtlas';
+import { getBiomeForStage } from '../game/stageGenerator';
 import {
   ACCESSORIES,
   ARMORS,
@@ -61,7 +65,7 @@ export const RpgHub: React.FC<RpgHubProps> = ({
   const [selectedWorld, setSelectedWorld] = useState<number>(
     Math.floor((save.highestUnlockedStage - 1) / 20),
   );
-  const [smithFilter, setSmithFilter] = useState<'all' | 'guns' | 'swords'>('all');
+  const [smithFilter, setSmithFilter] = useState<'all' | 'guns' | 'swords' | 'armors'>('all');
   const [toast, setToast] = useState<string | null>(null);
   const hubRef = useRef<HTMLDivElement | null>(null);
 
@@ -90,6 +94,7 @@ export const RpgHub: React.FC<RpgHubProps> = ({
   const worldStartStage = selectedWorld * 20 + 1;
   const ammoTier = getNextAmmoUpgradeTier(save.maxAmmo);
   const hpPotionFull = save.hpPotions >= MAX_HP_POTIONS;
+  const nextBiome = getBiomeForStage(save.highestUnlockedStage);
 
   return (
     <div
@@ -103,7 +108,7 @@ export const RpgHub: React.FC<RpgHubProps> = ({
           <span className="font-pixel-title text-[#38bdf8]">LV.{save.level}</span>
           <span className="text-[#facc15]">{save.gold}G</span>
           <span className="text-[#22d3ee]">CR:{save.rareCrystals}</span>
-          <span className="text-[#cbd5e1]">MT:{save.weaponMaterials}</span>
+          <span className="text-[#cbd5e1]">IRON:{save.weaponMaterials}</span>
         </div>
         <div className="flex items-center gap-1.5">
           <span className="text-[#fde047]">
@@ -170,12 +175,12 @@ export const RpgHub: React.FC<RpgHubProps> = ({
           <div className="space-y-2">
             {/* Quick Enter Stage CTA */}
             <div className="flex items-center justify-between gap-2 bg-[#111827] border border-[#26324d] p-2">
-              <div>
-                <div className="text-[#facc15] font-bold">
-                  {WORLD_NAMES[Math.floor((save.highestUnlockedStage - 1) / 20)]}
+              <div className="min-w-0">
+                <div className="text-[#facc15] font-bold truncate">
+                  {WORLD_NAMES[Math.floor((save.highestUnlockedStage - 1) / 20)]} · {nextBiome.name}
                 </div>
                 <div className="text-[#94a3b8] text-[8px] tabular-nums">
-                  Cleared: {save.clearedStages.length}/100 · 5 Portals/Stage · Next: {save.highestUnlockedStage}
+                  Cleared: {save.clearedStages.length}/100 · Kill 5 → Exit · Stg {save.highestUnlockedStage}
                 </div>
               </div>
               <button
@@ -223,11 +228,13 @@ export const RpgHub: React.FC<RpgHubProps> = ({
                 const unlocked = stg <= save.highestUnlockedStage;
                 const cleared = save.clearedStages.includes(stg);
                 const isBoss = stg % 5 === 0;
+                const stgBiome = getBiomeForStage(stg);
                 return (
                   <button
                     key={stg}
                     type="button"
                     disabled={!unlocked}
+                    title={`Stage ${stg} - ${stgBiome.name}`}
                     onClick={() => {
                       gameAudio.playMenuSelect();
                       onEnterStage(stg);
@@ -243,7 +250,8 @@ export const RpgHub: React.FC<RpgHubProps> = ({
                     }`}
                   >
                     <div className="font-bold">{stg}</div>
-                    <div className="text-[7px]">{isBoss ? 'BOSS' : cleared ? 'CLR' : unlocked ? 'GO' : 'LCK'}</div>
+                    <div className="text-[6px] truncate opacity-85">{stgBiome.name}</div>
+                    <div className="text-[7px]">{isBoss ? (stg === 100 ? 'FINAL' : 'BOSS') : cleared ? 'CLR' : unlocked ? 'GO' : 'LCK'}</div>
                   </button>
                 );
               })}
@@ -298,6 +306,7 @@ export const RpgHub: React.FC<RpgHubProps> = ({
         {activeTab === 'shop' && (
           <div className="space-y-2">
             {/* Consumables & Ammo Upgrade */}
+            <div className="text-[#38bdf8] font-bold">Consumables &amp; Ammo</div>
             <div className="grid grid-cols-2 gap-1.5">
               <button
                 type="button"
@@ -374,81 +383,27 @@ export const RpgHub: React.FC<RpgHubProps> = ({
               </button>
             </div>
 
-            {/* Shop Swords */}
-            <div className="text-[#38bdf8] font-bold pt-1">Swords</div>
+            {/* Accessories Only (Weapons & Armors belong exclusively in Blacksmith) */}
+            <div className="text-[#facc15] font-bold pt-1">Accessories</div>
             <div className="space-y-1">
-              {SWORDS.filter((s) => s.shopPrice).map((s) => {
-                const owned = save.ownedSwords.includes(s.id);
+              {ACCESSORIES.map((acc) => {
+                const owned = save.ownedAccessories.includes(acc.id);
                 return (
-                  <div
-                    key={s.id}
-                    className="flex items-center justify-between bg-[#111827] border border-[#26324d] p-1.5 gap-2"
-                  >
+                  <div key={acc.id} className="flex items-center justify-between bg-[#111827] border border-[#26324d] p-1.5 gap-2">
                     <div className="flex items-center gap-2 min-w-0">
-                      {icons?.swordIcons[s.spriteIndex] && (
-                        <img src={icons.swordIcons[s.spriteIndex]} alt={s.name} referrerPolicy="no-referrer" className="w-5 h-5 pixelated shrink-0" />
+                      {icons?.accessoryIcons[acc.spriteIndex] && (
+                        <img src={icons.accessoryIcons[acc.spriteIndex]} alt={acc.name} referrerPolicy="no-referrer" className="w-5 h-5 pixelated shrink-0" />
                       )}
                       <div className="min-w-0">
-                        <div className="text-white font-bold truncate">{s.name}</div>
-                        <div className="text-[#94a3b8] text-[8px] truncate">
-                          ATK {s.baseDamage} · {s.effectLabel}
-                        </div>
+                        <div className="text-white font-bold truncate">{acc.name}</div>
+                        <div className="text-[#94a3b8] text-[8px] truncate">{acc.effectText}</div>
                       </div>
                     </div>
                     <button
                       type="button"
                       disabled={owned}
-                      onClick={() => handleAction(buyShopItem(save, { swordId: s.id }))}
-                      className={`px-2 py-1 border text-[8px] shrink-0 ${
-                        owned
-                          ? 'bg-[#090d16] border-[#1e293b] text-[#4ade80]'
-                          : 'bg-[#1d4ed8] hover:bg-[#2563eb] border-[#facc15] text-white cursor-pointer'
-                      }`}
-                    >
-                      {owned ? 'OWNED' : `${s.shopPrice}G`}
-                    </button>
-                  </div>
-                );
-              })}
-            </div>
-
-            {/* Armors & Accessories */}
-            <div className="text-[#38bdf8] font-bold pt-1">Armor &amp; Accessories</div>
-            <div className="space-y-1">
-              {ARMORS.filter((a) => a.price > 0).map((a) => {
-                const owned = save.ownedArmors.includes(a.id);
-                return (
-                  <div key={a.id} className="flex items-center justify-between bg-[#111827] border border-[#26324d] p-1.5">
-                    <div>
-                      <div className="text-white font-bold">{a.name}</div>
-                      <div className="text-[#94a3b8] text-[8px]">+{a.defBonus} DEF · +{a.hpBonus} HP</div>
-                    </div>
-                    <button
-                      type="button"
-                      disabled={owned}
-                      onClick={() => handleAction(buyShopItem(save, { armorId: a.id }))}
-                      className={`px-2 py-1 border text-[8px] ${
-                        owned ? 'bg-[#090d16] border-[#1e293b] text-[#4ade80]' : 'bg-[#1d4ed8] border-[#facc15] text-white cursor-pointer'
-                      }`}
-                    >
-                      {owned ? 'OWNED' : `${a.price}G`}
-                    </button>
-                  </div>
-                );
-              })}
-              {ACCESSORIES.map((acc) => {
-                const owned = save.ownedAccessories.includes(acc.id);
-                return (
-                  <div key={acc.id} className="flex items-center justify-between bg-[#111827] border border-[#26324d] p-1.5">
-                    <div>
-                      <div className="text-white font-bold">{acc.name}</div>
-                      <div className="text-[#94a3b8] text-[8px]">{acc.effectText}</div>
-                    </div>
-                    <button
-                      type="button"
-                      disabled={owned}
                       onClick={() => handleAction(buyShopItem(save, { accessoryId: acc.id }))}
-                      className={`px-2 py-1 border text-[8px] ${
+                      className={`px-2 py-1 border text-[8px] shrink-0 ${
                         owned ? 'bg-[#090d16] border-[#1e293b] text-[#4ade80]' : 'bg-[#1d4ed8] border-[#facc15] text-white cursor-pointer'
                       }`}
                     >
@@ -458,18 +413,23 @@ export const RpgHub: React.FC<RpgHubProps> = ({
                 );
               })}
             </div>
+
+            <div className="text-[#64748b] text-[8px] pt-1">
+              * Weapons &amp; Armors are forged exclusively at the Blacksmith (Smith).
+            </div>
           </div>
         )}
 
         {activeTab === 'blacksmith' && (
           <div className="space-y-2">
             {/* Blacksmith Filter Toggle */}
-            <div className="grid grid-cols-3 gap-1">
+            <div className="grid grid-cols-4 gap-1">
               {(
                 [
-                  { id: 'all', label: 'ALL WEAPONS' },
+                  { id: 'all', label: 'ALL' },
                   { id: 'guns', label: 'GUNS (10)' },
                   { id: 'swords', label: 'SWORDS (10)' },
+                  { id: 'armors', label: 'ARMOR (5)' },
                 ] as const
               ).map((f) => (
                 <button
@@ -479,7 +439,7 @@ export const RpgHub: React.FC<RpgHubProps> = ({
                     gameAudio.playMenuMove();
                     setSmithFilter(f.id);
                   }}
-                  className={`py-1 px-1 border text-[8px] cursor-pointer ${
+                  className={`py-1 px-1 border text-[8px] cursor-pointer truncate ${
                     smithFilter === f.id
                       ? 'bg-[#1d4ed8] border-[#facc15] text-white'
                       : 'bg-[#111827] border-[#26324d] text-[#94a3b8]'
@@ -490,7 +450,7 @@ export const RpgHub: React.FC<RpgHubProps> = ({
               ))}
             </div>
 
-            {smithFilter !== 'swords' && (
+            {(smithFilter === 'all' || smithFilter === 'guns') && (
               <>
                 <div className="text-[#38bdf8] font-bold">Upgrade Owned Guns (+1 to +10)</div>
                 <div className="space-y-1">
@@ -511,7 +471,7 @@ export const RpgHub: React.FC<RpgHubProps> = ({
                             <div className="text-[#94a3b8] text-[8px] truncate">
                               {lvl >= 10
                                 ? 'MAX LEVEL'
-                                : `${cost.gold}G · ${cost.materials}MT${cost.crystals ? ` · ${cost.crystals}CR` : ''}`}
+                                : `${cost.gold}G · ${cost.materials} IRON${cost.crystals ? ` · ${cost.crystals}CR` : ''}`}
                             </div>
                           </div>
                         </div>
@@ -544,11 +504,11 @@ export const RpgHub: React.FC<RpgHubProps> = ({
                           <div className="text-white font-bold truncate">
                             {g.name}{' '}
                             <span className={g.rangePx === null ? 'text-[#38bdf8]' : g.isShotgun ? 'text-[#f97316]' : 'text-[#94a3b8]'}>
-                              [{g.rangePx === null ? 'INF' : g.isShotgun ? '3x SHT' : `${g.rangePx}px`}]
+                              [{g.rangePx === null ? 'INF' : `${Math.round(g.rangePx / 16)} BLK`}]
                             </span>
                           </div>
                           <div className="text-[#94a3b8] text-[8px] truncate">
-                            {g.craftCost!.gold}G · {g.craftCost!.materials}MT ·{' '}
+                            {g.craftCost!.gold}G · {g.craftCost!.materials} IRON ·{' '}
                             <span className="text-[#22d3ee]">{g.craftCost!.crystals}CR</span> · {g.effectLabel}
                           </div>
                         </div>
@@ -566,7 +526,7 @@ export const RpgHub: React.FC<RpgHubProps> = ({
               </>
             )}
 
-            {smithFilter !== 'guns' && (
+            {(smithFilter === 'all' || smithFilter === 'swords') && (
               <>
                 <div className="text-[#facc15] font-bold pt-1">Upgrade Owned Swords (+1 to +10)</div>
                 <div className="space-y-1">
@@ -587,7 +547,7 @@ export const RpgHub: React.FC<RpgHubProps> = ({
                             <div className="text-[#94a3b8] text-[8px]">
                               {lvl >= 10
                                 ? 'MAX LEVEL'
-                                : `${cost.gold}G · ${cost.materials}MT${cost.crystals ? ` · ${cost.crystals}CR` : ''}`}
+                                : `${cost.gold}G · ${cost.materials} IRON${cost.crystals ? ` · ${cost.crystals}CR` : ''}`}
                             </div>
                           </div>
                         </div>
@@ -619,7 +579,7 @@ export const RpgHub: React.FC<RpgHubProps> = ({
                         <div className="min-w-0">
                           <div className="text-white font-bold truncate">{s.name}</div>
                           <div className="text-[#94a3b8] text-[8px]">
-                            {s.craftCost!.gold}G · {s.craftCost!.materials}MT ·{' '}
+                            {s.craftCost!.gold}G · {s.craftCost!.materials} IRON ·{' '}
                             <span className="text-[#22d3ee]">{s.craftCost!.crystals}CR</span>
                           </div>
                         </div>
@@ -627,6 +587,77 @@ export const RpgHub: React.FC<RpgHubProps> = ({
                       <button
                         type="button"
                         onClick={() => handleAction(craftSword(save, s.id))}
+                        className="px-2 py-1 bg-[#1d4ed8] hover:bg-[#2563eb] border border-[#38bdf8] text-white text-[8px] shrink-0 cursor-pointer"
+                      >
+                        FORGE
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              </>
+            )}
+
+            {(smithFilter === 'all' || smithFilter === 'armors') && (
+              <>
+                <div className="text-[#4ade80] font-bold pt-1">Upgrade Owned Armor (+1 to +10)</div>
+                <div className="space-y-1">
+                  {save.ownedArmors.map((aid) => {
+                    const a = getArmorDef(aid);
+                    const lvl = save.armorUpgrades?.[aid] ?? 0;
+                    const cost = getSwordUpgradeCost(lvl);
+                    return (
+                      <div key={aid} className="flex items-center justify-between bg-[#111827] border border-[#26324d] p-1.5 gap-2">
+                        <div className="flex items-center gap-2 min-w-0">
+                          {icons?.armorIcons[a.spriteIndex] && (
+                            <img src={icons.armorIcons[a.spriteIndex]} alt={a.name} referrerPolicy="no-referrer" className="w-5 h-5 pixelated shrink-0" />
+                          )}
+                          <div className="min-w-0">
+                            <div className="text-white font-bold truncate">
+                              {a.name} <span className="text-[#facc15]">+{lvl}</span>
+                            </div>
+                            <div className="text-[#94a3b8] text-[8px]">
+                              {lvl >= 10
+                                ? 'MAX LEVEL'
+                                : `${cost.gold}G · ${cost.materials} IRON${cost.crystals ? ` · ${cost.crystals}CR` : ''}`}
+                            </div>
+                          </div>
+                        </div>
+                        <button
+                          type="button"
+                          disabled={lvl >= 10}
+                          onClick={() => handleAction(upgradeArmor(save, aid))}
+                          className={`px-2 py-1 border text-[8px] shrink-0 ${
+                            lvl >= 10
+                              ? 'bg-[#090d16] border-[#1e293b] text-[#4ade80]'
+                              : 'bg-[#b45309] hover:bg-[#d97706] border-[#fde047] text-white cursor-pointer'
+                          }`}
+                        >
+                          {lvl >= 10 ? 'MAX' : 'UPGRADE'}
+                        </button>
+                      </div>
+                    );
+                  })}
+                </div>
+
+                <div className="text-[#38bdf8] font-bold pt-1">Forge Armors</div>
+                <div className="space-y-1">
+                  {ARMORS.filter((a) => a.craftCost && !save.ownedArmors.includes(a.id)).map((a) => (
+                    <div key={a.id} className="flex items-center justify-between bg-[#111827] border border-[#26324d] p-1.5 gap-2">
+                      <div className="flex items-center gap-2 min-w-0">
+                        {icons?.armorIcons[a.spriteIndex] && (
+                          <img src={icons.armorIcons[a.spriteIndex]} alt={a.name} referrerPolicy="no-referrer" className="w-5 h-5 pixelated shrink-0" />
+                        )}
+                        <div className="min-w-0">
+                          <div className="text-white font-bold truncate">{a.name}</div>
+                          <div className="text-[#94a3b8] text-[8px] truncate">
+                            +{a.defBonus} DEF · +{a.hpBonus} HP · {a.craftCost!.gold}G · {a.craftCost!.materials} IRON ·{' '}
+                            <span className="text-[#22d3ee]">{a.craftCost!.crystals}CR</span>
+                          </div>
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => handleAction(craftArmor(save, a.id))}
                         className="px-2 py-1 bg-[#1d4ed8] hover:bg-[#2563eb] border border-[#38bdf8] text-white text-[8px] shrink-0 cursor-pointer"
                       >
                         FORGE
@@ -657,7 +688,7 @@ export const RpgHub: React.FC<RpgHubProps> = ({
                 const owned = save.ownedGuns.includes(g.id);
                 const equipped = save.equippedGun === g.id;
                 const upg = save.gunUpgrades[g.id] ?? 0;
-                const rangeText = g.rangePx === null ? 'Infinite' : `${g.rangePx}px`;
+                const rangeText = g.rangePx === null ? 'Infinite' : `${Math.round(g.rangePx / 16)} Blok (${g.rangePx}px)`;
                 return (
                   <div
                     key={g.id}
@@ -679,7 +710,7 @@ export const RpgHub: React.FC<RpgHubProps> = ({
                         </div>
                         <div className="text-[#94a3b8] text-[8px] truncate">
                           {owned
-                            ? `DMG ${g.baseDamage + upg * 3}${g.pellets > 1 ? ` x${g.pellets}` : ''} · Range: ${rangeText}`
+                            ? `DMG ${g.baseDamage + upg * 3}${g.pellets > 1 ? ` x${g.pellets}` : ''} · ${rangeText}`
                             : `Forge in Smith (${g.craftCost?.crystals ?? 0}CR) · ${rangeText}`}
                         </div>
                       </div>
@@ -758,27 +789,56 @@ export const RpgHub: React.FC<RpgHubProps> = ({
               })}
             </div>
 
-            <div className="text-[#38bdf8] font-bold pt-1">Armor</div>
-            <div className="grid grid-cols-2 gap-1">
-              {save.ownedArmors.map((aid) => {
-                const a = ARMORS.find((x) => x.id === aid);
-                if (!a) return null;
-                const eq = save.equippedArmor === aid;
+            <div className="text-[#38bdf8] font-bold pt-1">Armor ({save.ownedArmors.length}/5)</div>
+            <div className="space-y-1">
+              {ARMORS.map((a) => {
+                const owned = save.ownedArmors.includes(a.id);
+                const eq = save.equippedArmor === a.id;
+                const upg = save.armorUpgrades?.[a.id] ?? 0;
                 return (
-                  <button
-                    key={aid}
-                    type="button"
-                    onClick={() => {
-                      gameAudio.playMenuSelect();
-                      onUpdateSave({ ...save, equippedArmor: aid });
-                    }}
-                    className={`p-1.5 border text-left cursor-pointer ${
-                      eq ? 'bg-[#172554] border-[#facc15] text-white' : 'bg-[#111827] border-[#26324d] text-[#94a3b8]'
+                  <div
+                    key={a.id}
+                    className={`flex items-center justify-between border p-1.5 gap-2 ${
+                      eq
+                        ? 'bg-[#172554] border-[#facc15]'
+                        : owned
+                          ? 'bg-[#111827] border-[#26324d]'
+                          : 'bg-[#090d16] border-[#1e293b] opacity-55'
                     }`}
                   >
-                    <div className="font-bold truncate">{a.name}</div>
-                    <div className="text-[8px]">+{a.defBonus} DEF · {eq ? 'EQUIPPED' : 'Click Equip'}</div>
-                  </button>
+                    <div className="flex items-center gap-2 min-w-0">
+                      {icons?.armorIcons[a.spriteIndex] && (
+                        <img src={icons.armorIcons[a.spriteIndex]} alt={a.name} referrerPolicy="no-referrer" className="w-5 h-5 pixelated shrink-0" />
+                      )}
+                      <div className="min-w-0">
+                        <div className="text-white font-bold truncate">
+                          {a.name} {owned && upg > 0 ? `+${upg}` : ''}
+                        </div>
+                        <div className="text-[#94a3b8] text-[8px] truncate">
+                          {owned
+                            ? `+${a.defBonus + upg * 3} DEF · +${a.hpBonus + upg * 10} HP`
+                            : `Forge in Smith (${a.craftCost?.crystals ?? 0}CR)`}
+                        </div>
+                      </div>
+                    </div>
+                    {owned && (
+                      <button
+                        type="button"
+                        disabled={eq}
+                        onClick={() => {
+                          gameAudio.playMenuSelect();
+                          onUpdateSave({ ...save, equippedArmor: a.id });
+                        }}
+                        className={`px-2 py-1 border text-[8px] shrink-0 ${
+                          eq
+                            ? 'bg-[#16a34a] border-[#fde047] text-white'
+                            : 'bg-[#1e293b] hover:bg-[#334155] border-[#475569] text-[#cbd5e1] cursor-pointer'
+                        }`}
+                      >
+                        {eq ? 'EQUIPPED' : 'EQUIP'}
+                      </button>
+                    )}
+                  </div>
                 );
               })}
             </div>
@@ -786,7 +846,7 @@ export const RpgHub: React.FC<RpgHubProps> = ({
             {save.ownedAccessories.length > 0 && (
               <>
                 <div className="text-[#38bdf8] font-bold pt-1">Accessories</div>
-                <div className="grid grid-cols-2 gap-1">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-1">
                   {save.ownedAccessories.map((accId) => {
                     const acc = ACCESSORIES.find((x) => x.id === accId);
                     if (!acc) return null;
@@ -799,12 +859,17 @@ export const RpgHub: React.FC<RpgHubProps> = ({
                           gameAudio.playMenuSelect();
                           onUpdateSave({ ...save, equippedAccessory: eq ? null : accId });
                         }}
-                        className={`p-1.5 border text-left cursor-pointer ${
+                        className={`flex items-center gap-2 p-1.5 border text-left cursor-pointer ${
                           eq ? 'bg-[#172554] border-[#facc15] text-white' : 'bg-[#111827] border-[#26324d] text-[#94a3b8]'
                         }`}
                       >
-                        <div className="font-bold truncate">{acc.name}</div>
-                        <div className="text-[8px]">{acc.effectText}</div>
+                        {icons?.accessoryIcons[acc.spriteIndex] && (
+                          <img src={icons.accessoryIcons[acc.spriteIndex]} alt={acc.name} referrerPolicy="no-referrer" className="w-5 h-5 pixelated shrink-0" />
+                        )}
+                        <div className="min-w-0">
+                          <div className="font-bold truncate">{acc.name}</div>
+                          <div className="text-[8px] truncate">{acc.effectText}</div>
+                        </div>
                       </button>
                     );
                   })}
@@ -817,3 +882,4 @@ export const RpgHub: React.FC<RpgHubProps> = ({
     </div>
   );
 };
+

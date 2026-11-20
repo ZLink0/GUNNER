@@ -1,6 +1,7 @@
 import {
   ACCESSORIES,
   ARMORS,
+  ArmorDef,
   DropKind,
   GUNS,
   GameSettings,
@@ -31,7 +32,7 @@ export const AMMO_UPGRADE_TIERS = [
 
 export function createDefaultSave(): SaveState {
   return {
-    version: 2,
+    version: 3,
     level: 1,
     exp: 0,
     gold: 120,
@@ -50,6 +51,7 @@ export function createDefaultSave(): SaveState {
     gunUpgrades: { buster_mk1: 0 },
     equippedGun: 'buster_mk1',
     ownedArmors: ['adventurer_vest'],
+    armorUpgrades: { adventurer_vest: 0 },
     equippedArmor: 'adventurer_vest',
     ownedAccessories: [],
     equippedAccessory: null,
@@ -82,6 +84,10 @@ export function getGunDef(id: GunId): GunDef {
   return GUNS.find((g) => g.id === id) ?? GUNS[0];
 }
 
+export function getArmorDef(id: string): ArmorDef {
+  return ARMORS.find((a) => a.id === id) ?? ARMORS[0];
+}
+
 export function getExpForNextLevel(level: number): number {
   if (level >= MAX_LEVEL) return 0;
   return Math.round(45 + level * 28 + Math.pow(level, 1.45) * 6);
@@ -101,6 +107,8 @@ export interface HeroComputedStats {
   swordUpgradeLevel: number;
   gunDef: GunDef;
   gunUpgradeLevel: number;
+  armorDef: ArmorDef;
+  armorUpgradeLevel: number;
 }
 
 export function computeHeroStats(save: SaveState): HeroComputedStats {
@@ -108,18 +116,19 @@ export function computeHeroStats(save: SaveState): HeroComputedStats {
   const swordUpgradeLevel = save.swordUpgrades[save.equippedSword] ?? 0;
   const gunDef = getGunDef(save.equippedGun ?? 'buster_mk1');
   const gunUpgradeLevel = save.gunUpgrades?.[save.equippedGun ?? 'buster_mk1'] ?? 0;
-  const armor = ARMORS.find((a) => a.id === save.equippedArmor) ?? ARMORS[0];
+  const armorDef = getArmorDef(save.equippedArmor);
+  const armorUpgradeLevel = save.armorUpgrades?.[save.equippedArmor] ?? 0;
   const acc = ACCESSORIES.find((a) => a.id === save.equippedAccessory) ?? null;
 
   const lvl = Math.max(1, Math.min(MAX_LEVEL, save.level));
-  const maxHp = 80 + (lvl - 1) * 12 + armor.hpBonus;
+  const maxHp = 80 + (lvl - 1) * 12 + armorDef.hpBonus + armorUpgradeLevel * 10;
   const maxMp = 40 + (lvl - 1) * 4;
   const swordAtk = swordDef.baseDamage + swordUpgradeLevel * 4;
   const baseHeroAtk = 6 + Math.floor((lvl - 1) * 1.8);
   const atk = baseHeroAtk + swordAtk + (acc?.atkBonus ?? 0);
   const gunBase = gunDef.baseDamage + gunUpgradeLevel * 3;
   const gunAtk = Math.round(gunBase + (lvl - 1) * 1.6 + (acc?.atkBonus ?? 0) * 0.6);
-  const def = 2 + Math.floor((lvl - 1) * 0.9) + armor.defBonus;
+  const def = 2 + Math.floor((lvl - 1) * 0.9) + armorDef.defBonus + armorUpgradeLevel * 3;
   const critRate = Math.min(0.75, 0.06 + swordDef.critBonus + (acc?.critBonus ?? 0) + lvl * 0.0015);
   const speedMult = 1 + (acc?.speedBonus ?? 0);
   const effectiveMaxAmmo = Math.min(MAX_AMMO_CAP + 10, save.maxAmmo + (acc?.ammoBonus ?? 0));
@@ -138,6 +147,8 @@ export function computeHeroStats(save: SaveState): HeroComputedStats {
     swordUpgradeLevel,
     gunDef,
     gunUpgradeLevel,
+    armorDef,
+    armorUpgradeLevel,
   };
 }
 
@@ -167,7 +178,7 @@ export function calculateAttackDamage(params: {
   rawAtk: number;
   targetDef?: number;
   critRate: number;
-  rngValue: number; // 0..1
+  rngValue: number;
   multiplier?: number;
   isBossTarget?: boolean;
   swordId?: SwordId;
@@ -214,9 +225,16 @@ export function addHpPotion(currentPotions: number, add = 1): { nextPotions: num
 }
 
 /**
- * Exact drop rate distribution:
+ * Only 10% of defeated enemies drop an item (Crystal, Iron, Ammo, Potion).
+ */
+export function shouldEnemyDropItem(rngChance: number): boolean {
+  return rngChance < 0.10;
+}
+
+/**
+ * Exact drop item distribution when a drop occurs:
  * - 10% Rare Crystal [0.00 .. 0.10)
- * - 10% Weapon Material [0.10 .. 0.20)
+ * - 10% Iron (weapon_material) [0.10 .. 0.20)
  * - 10% HP Potion [0.20 .. 0.30)
  * - 10% Ammo (Small/Med/Large) [0.30 .. 0.40)
  * - 15% Mana Potion [0.40 .. 0.55)
@@ -272,7 +290,7 @@ export function upgradeSword(save: SaveState, swordId: SwordId): { ok: boolean; 
   if (cur >= 10) return { ok: false, next: save, message: 'Max +10 reached' };
   const cost = getSwordUpgradeCost(cur);
   if (save.gold < cost.gold || save.weaponMaterials < cost.materials || save.rareCrystals < cost.crystals) {
-    return { ok: false, next: save, message: 'Not enough Gold/Materials' };
+    return { ok: false, next: save, message: 'Not enough Gold/Iron/Crystal' };
   }
   return {
     ok: true,
@@ -296,7 +314,7 @@ export function craftSword(save: SaveState, swordId: SwordId): { ok: boolean; ne
   if (!def.craftCost) return { ok: false, next: save, message: 'Cannot be forged' };
   const { gold, materials, crystals } = def.craftCost;
   if (save.gold < gold || save.weaponMaterials < materials || save.rareCrystals < crystals) {
-    return { ok: false, next: save, message: `Need ${gold}G, ${materials}MT, ${crystals}CR` };
+    return { ok: false, next: save, message: `Need ${gold}G, ${materials} Iron, ${crystals} CR` };
   }
   return {
     ok: true,
@@ -321,7 +339,7 @@ export function upgradeGun(save: SaveState, gunId: GunId): { ok: boolean; next: 
   if (cur >= 10) return { ok: false, next: save, message: 'Max +10 reached' };
   const cost = getSwordUpgradeCost(cur);
   if (save.gold < cost.gold || save.weaponMaterials < cost.materials || save.rareCrystals < cost.crystals) {
-    return { ok: false, next: save, message: 'Not enough Gold/Materials' };
+    return { ok: false, next: save, message: 'Not enough Gold/Iron/Crystal' };
   }
   return {
     ok: true,
@@ -345,7 +363,7 @@ export function craftGun(save: SaveState, gunId: GunId): { ok: boolean; next: Sa
   if (!def.craftCost) return { ok: false, next: save, message: 'Cannot be forged' };
   const { gold, materials, crystals } = def.craftCost;
   if (save.gold < gold || save.weaponMaterials < materials || save.rareCrystals < crystals) {
-    return { ok: false, next: save, message: `Need ${gold}G, ${materials}MT, ${crystals}CR` };
+    return { ok: false, next: save, message: `Need ${gold}G, ${materials} Iron, ${crystals} CR` };
   }
   return {
     ok: true,
@@ -362,9 +380,59 @@ export function craftGun(save: SaveState, gunId: GunId): { ok: boolean; next: Sa
   };
 }
 
+export function craftArmor(save: SaveState, armorId: string): { ok: boolean; next: SaveState; message: string } {
+  if (save.ownedArmors.includes(armorId)) {
+    return { ok: false, next: save, message: 'Already owned' };
+  }
+  const def = ARMORS.find((a) => a.id === armorId);
+  if (!def || !def.craftCost) return { ok: false, next: save, message: 'Cannot be forged' };
+  const { gold, materials, crystals } = def.craftCost;
+  if (save.gold < gold || save.weaponMaterials < materials || save.rareCrystals < crystals) {
+    return { ok: false, next: save, message: `Need ${gold}G, ${materials} Iron, ${crystals} CR` };
+  }
+  return {
+    ok: true,
+    next: {
+      ...save,
+      gold: save.gold - gold,
+      weaponMaterials: save.weaponMaterials - materials,
+      rareCrystals: save.rareCrystals - crystals,
+      ownedArmors: [...save.ownedArmors, armorId],
+      armorUpgrades: { ...(save.armorUpgrades ?? {}), [armorId]: 0 },
+      equippedArmor: armorId,
+    },
+    message: `Forged ${def.name}!`,
+  };
+}
+
+export function upgradeArmor(save: SaveState, armorId: string): { ok: boolean; next: SaveState; message: string } {
+  if (!save.ownedArmors.includes(armorId)) {
+    return { ok: false, next: save, message: 'Armor not owned' };
+  }
+  const cur = save.armorUpgrades?.[armorId] ?? 0;
+  if (cur >= 10) return { ok: false, next: save, message: 'Max +10 reached' };
+  const cost = getSwordUpgradeCost(cur);
+  if (save.gold < cost.gold || save.weaponMaterials < cost.materials || save.rareCrystals < cost.crystals) {
+    return { ok: false, next: save, message: 'Not enough Gold/Iron/Crystal' };
+  }
+  return {
+    ok: true,
+    next: {
+      ...save,
+      gold: save.gold - cost.gold,
+      weaponMaterials: save.weaponMaterials - cost.materials,
+      rareCrystals: save.rareCrystals - cost.crystals,
+      armorUpgrades: { ...(save.armorUpgrades ?? {}), [armorId]: cur + 1 },
+      stats: { ...save.stats, swordsUpgraded: save.stats.swordsUpgraded + 1 },
+    },
+    message: `${getArmorDef(armorId).name} +${cur + 1}!`,
+  };
+}
+
+// Shop ONLY sells consumables, ammo upgrades, and accessories (Weapons & Armor are Blacksmith-only)
 export function buyShopItem(
   save: SaveState,
-  item: 'hp_potion' | 'mana_potion' | 'ammo_pack' | 'ammo_upgrade' | { swordId: SwordId } | { armorId: string } | { accessoryId: string },
+  item: 'hp_potion' | 'mana_potion' | 'ammo_pack' | 'ammo_upgrade' | { accessoryId: string },
 ): { ok: boolean; next: SaveState; message: string } {
   const stats = computeHeroStats(save);
   if (item === 'hp_potion') {
@@ -400,39 +468,6 @@ export function buyShopItem(
   }
   if (item === 'ammo_upgrade') {
     return upgradeAmmoCapacity(save);
-  }
-  if ('swordId' in item) {
-    const def = getSwordDef(item.swordId);
-    if (!def.shopPrice) return { ok: false, next: save, message: 'Not sold here' };
-    if (save.ownedSwords.includes(item.swordId)) return { ok: false, next: save, message: 'Already owned' };
-    if (save.gold < def.shopPrice) return { ok: false, next: save, message: `Need ${def.shopPrice}G` };
-    return {
-      ok: true,
-      next: {
-        ...save,
-        gold: save.gold - def.shopPrice,
-        ownedSwords: [...save.ownedSwords, item.swordId],
-        swordUpgrades: { ...save.swordUpgrades, [item.swordId]: 0 },
-        equippedSword: item.swordId,
-      },
-      message: `Bought ${def.name}!`,
-    };
-  }
-  if ('armorId' in item) {
-    const armor = ARMORS.find((a) => a.id === item.armorId);
-    if (!armor) return { ok: false, next: save, message: 'Unknown armor' };
-    if (save.ownedArmors.includes(armor.id)) return { ok: false, next: save, message: 'Already owned' };
-    if (save.gold < armor.price) return { ok: false, next: save, message: `Need ${armor.price}G` };
-    return {
-      ok: true,
-      next: {
-        ...save,
-        gold: save.gold - armor.price,
-        ownedArmors: [...save.ownedArmors, armor.id],
-        equippedArmor: armor.id,
-      },
-      message: `Equipped ${armor.name}!`,
-    };
   }
   if ('accessoryId' in item) {
     const acc = ACCESSORIES.find((a) => a.id === item.accessoryId);
@@ -523,6 +558,7 @@ export function loadSaveState(): SaveState | null {
       ownedGuns: parsed.ownedGuns?.length ? parsed.ownedGuns : def.ownedGuns,
       gunUpgrades: parsed.gunUpgrades ?? def.gunUpgrades,
       equippedGun: parsed.equippedGun ?? def.equippedGun,
+      armorUpgrades: parsed.armorUpgrades ?? def.armorUpgrades,
     };
   } catch {
     return null;

@@ -368,6 +368,27 @@ export default function App() {
     engineRef.current?.setVirtualButton(btn, down);
   }, []);
 
+  const handleStartButton = useCallback(() => {
+    if (showOptionsRef.current) {
+      gameAudio.playMenuSelect();
+      setShowOptions(false);
+      return;
+    }
+    if (phaseRef.current === 'playing' && subModeRef.current === 'stage') {
+      gameAudio.playMenuSelect();
+      engineRef.current?.setPaused(true);
+      setPhase('paused');
+      return;
+    }
+    if (phaseRef.current === 'paused') {
+      gameAudio.playMenuSelect();
+      engineRef.current?.setPaused(false);
+      setPhase('playing');
+      return;
+    }
+    handleMenuNav('ok');
+  }, [handleMenuNav]);
+
   const paletteFilterClass =
     settings.palette === 'pocket'
       ? 'grayscale contrast-125 sepia-[.25]'
@@ -389,6 +410,7 @@ export default function App() {
           setPhase('paused');
         }
       }}
+      onStart={handleStartButton}
       onOptions={() => setShowOptions(true)}
     >
       {/* Persistent 1:1 GBC Pixel Canvas */}

@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { BOSS_CATALOG, FINAL_BOSS, KEROCO_CATALOG } from './enemyCatalog';
 import {
   addExpAndLevelUp,
   addHpPotion,
@@ -8,17 +9,20 @@ import {
   claimQuestReward,
   computeHeroStats,
   consumeAmmo,
+  craftArmor,
   craftGun,
   craftSword,
   createDefaultSave,
   getExpForNextLevel,
   refillAmmo,
   rollEnemyDropKind,
+  shouldEnemyDropItem,
   upgradeAmmoCapacity,
+  upgradeArmor,
   upgradeGun,
   upgradeSword,
 } from './rpgLogic';
-import { GUNS, MAX_HP_POTIONS, SWORDS } from './types';
+import { ARMORS, GUNS, MAX_HP_POTIONS, SWORDS } from './types';
 
 test('EXP and Level 1-100 progression scales and caps at 100', () => {
   const save = createDefaultSave();
@@ -86,14 +90,22 @@ test('Damage, critical hit, and boss-slayer bonuses compute accurately', () => {
   assert.equal(dragonHit.damage, 60);
 });
 
-test('10 Guns catalog, crystal range 20-200, 3-pellet short-range shotguns, and infinite top guns', () => {
+test('10 Guns catalog, 3-block weak gun range (48px), 3-pellet shotguns, infinite top guns, and 40+10+1 enemies', () => {
   assert.equal(GUNS.length, 10);
+  assert.equal(ARMORS.length, 5);
+  assert.equal(KEROCO_CATALOG.length, 40);
+  assert.equal(BOSS_CATALOG.length, 10);
+  assert.equal(FINAL_BOSS.isFinalBoss, true);
+
+  // Weak starter gun & iron shotgun are strictly 3 blocks (48px)
+  const buster = GUNS.find((g) => g.id === 'buster_mk1')!;
+  assert.equal(buster.rangePx, 48);
 
   const shotguns = GUNS.filter((g) => g.isShotgun);
   assert.ok(shotguns.length >= 2);
   for (const sg of shotguns) {
     assert.equal(sg.pellets, 3);
-    assert.ok(sg.rangePx !== null && sg.rangePx <= 65, `${sg.name} should have very short range`);
+    assert.ok(sg.rangePx !== null && sg.rangePx <= 64, `${sg.name} should have very short range`);
   }
 
   const infGuns = GUNS.filter((g) => g.rangePx === null);
@@ -125,7 +137,12 @@ test('HP Potion capacity strictly caps at 10x in pickups and shop', () => {
   assert.equal(buyMaxed.next.hpPotions, 10);
 });
 
-test('Enemy drop distribution yields 10% crystal, 10% material, 10% HP potion, and 10% ammo', () => {
+test('Overall enemy drop gate is 10% and drop kind table balances crystals/iron/potions/ammo', () => {
+  assert.equal(shouldEnemyDropItem(0.05), true);
+  assert.equal(shouldEnemyDropItem(0.099), true);
+  assert.equal(shouldEnemyDropItem(0.10), false);
+  assert.equal(shouldEnemyDropItem(0.75), false);
+
   const counts: Record<string, number> = {
     rare_crystal: 0,
     weapon_material: 0,
@@ -147,26 +164,30 @@ test('Enemy drop distribution yields 10% crystal, 10% material, 10% HP potion, a
   assert.equal(counts.ammo, 100);
 });
 
-test('Shop purchase, Blacksmith forging/upgrading (Swords & Guns), and Quest claiming work end-to-end', () => {
+test('Shop sells accessories/consumables while Blacksmith forges/upgrades Swords, Guns, and Armors', () => {
   let save = {
     ...createDefaultSave(),
     gold: 5000,
-    weaponMaterials: 40,
-    rareCrystals: 200,
+    weaponMaterials: 50,
+    rareCrystals: 250,
     clearedStages: [1, 5],
   };
 
-  // Buy Crystal Sword from shop
-  const buy = buyShopItem(save, { swordId: 'crystal_sword' });
-  assert.equal(buy.ok, true);
-  assert.ok(buy.next.ownedSwords.includes('crystal_sword'));
-  save = buy.next;
+  // Buy accessory in Shop
+  const buyAcc = buyShopItem(save, { accessoryId: 'ammo_belt' });
+  assert.equal(buyAcc.ok, true);
+  assert.equal(buyAcc.next.equippedAccessory, 'ammo_belt');
+  save = buyAcc.next;
 
-  // Blacksmith forge Flame Sword (35CR)
-  const forge = craftSword(save, 'flame_sword');
-  assert.equal(forge.ok, true);
-  assert.equal(forge.next.equippedSword, 'flame_sword');
-  save = forge.next;
+  // Blacksmith forge Crystal Sword (20CR) & Flame Sword (35CR)
+  const forge1 = craftSword(save, 'crystal_sword');
+  assert.equal(forge1.ok, true);
+  save = forge1.next;
+
+  const forge2 = craftSword(save, 'flame_sword');
+  assert.equal(forge2.ok, true);
+  assert.equal(forge2.next.equippedSword, 'flame_sword');
+  save = forge2.next;
 
   // Blacksmith upgrade Flame Sword -> +1
   const upg = upgradeSword(save, 'flame_sword');
@@ -185,13 +206,27 @@ test('Shop purchase, Blacksmith forging/upgrading (Swords & Guns), and Quest cla
   assert.equal(upgGun.next.gunUpgrades.iron_shotgun, 1);
   save = upgGun.next;
 
+  // Blacksmith forge & upgrade Iron Mail Armor
+  const forgeArmor = craftArmor(save, 'iron_mail');
+  assert.equal(forgeArmor.ok, true);
+  assert.equal(forgeArmor.next.equippedArmor, 'iron_mail');
+  save = forgeArmor.next;
+
+  const upgArmor = upgradeArmor(save, 'iron_mail');
+  assert.equal(upgArmor.ok, true);
+  assert.equal(upgArmor.next.armorUpgrades.iron_mail, 1);
+  save = upgArmor.next;
+
   const stats = computeHeroStats(save);
   assert.ok(stats.atk > 30);
+  assert.ok(stats.def >= 11);
   assert.equal(stats.gunDef.id, 'iron_shotgun');
   assert.equal(stats.gunDef.pellets, 3);
+  assert.equal(stats.gunDef.rangePx, 48);
 
   // Claim Boss 1 quest -> awards Holy Sword
   const claim = claimQuestReward(save, 'q_main_boss1');
   assert.equal(claim.ok, true);
   assert.ok(claim.next.ownedSwords.includes('holy_sword'));
 });
+

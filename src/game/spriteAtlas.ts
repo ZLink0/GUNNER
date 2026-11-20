@@ -25,6 +25,7 @@ export const HERO_ANIMS: Record<HeroAnimName, HeroAnimSpec> = {
   climb: { row: 14, frames: 4, fps: 8, loop: true },
   dash: { row: 15, frames: 3, fps: 14, loop: true },
   potion: { row: 16, frames: 4, fps: 10, loop: false },
+  hangClimb: { row: 17, frames: 4, fps: 9, loop: true },
 };
 
 export interface LoadedSprites {
@@ -32,8 +33,12 @@ export interface LoadedSprites {
   swords: HTMLImageElement;
   guns: HTMLImageElement;
   enemies: HTMLImageElement;
+  enemiesKeroco: HTMLImageElement;
+  bosses: HTMLImageElement;
   itemsVfx: HTMLImageElement;
   menuIcons: HTMLImageElement;
+  gear: HTMLImageElement;
+  portals: HTMLImageElement;
   tiles: HTMLImageElement;
   backgrounds: HTMLImageElement;
 }
@@ -43,6 +48,8 @@ export interface ExtractedUiIcons {
   swordIcons: string[]; // 10 data URLs
   gunIcons: string[]; // 10 data URLs
   itemIcons: string[]; // 8 data URLs
+  armorIcons: string[]; // 5 data URLs
+  accessoryIcons: string[]; // 4 data URLs
 }
 
 function loadImg(src: string): Promise<HTMLImageElement> {
@@ -74,19 +81,38 @@ export function loadAllSprites(): Promise<{ sprites: LoadedSprites; icons: Extra
     loadImg('/sprites/swords.png'),
     loadImg('/sprites/guns.png'),
     loadImg('/sprites/enemies.png'),
+    loadImg('/sprites/enemies_keroco.png'),
+    loadImg('/sprites/bosses.png'),
     loadImg('/sprites/items_vfx.png'),
     loadImg('/sprites/menu_icons.png'),
+    loadImg('/sprites/gear.png'),
+    loadImg('/sprites/portals.png'),
     loadImg('/sprites/tiles.png'),
     loadImg('/sprites/backgrounds.png'),
-  ]).then(([hero, swords, guns, enemies, itemsVfx, menuIcons, tiles, backgrounds]) => {
+  ]).then(([hero, swords, guns, enemies, enemiesKeroco, bosses, itemsVfx, menuIcons, gear, portals, tiles, backgrounds]) => {
     const icons: ExtractedUiIcons = {
       menuIcons: Array.from({ length: 5 }, (_, i) => cropToPngDataUrl(menuIcons, i * 24, 0, 24, 24)),
       swordIcons: Array.from({ length: 10 }, (_, i) => cropToPngDataUrl(swords, i * 16, 0, 16, 16)),
       gunIcons: Array.from({ length: 10 }, (_, i) => cropToPngDataUrl(guns, i * 16, 0, 16, 16)),
       itemIcons: Array.from({ length: 8 }, (_, i) => cropToPngDataUrl(itemsVfx, i * 16, 0, 16, 16)),
+      armorIcons: Array.from({ length: 5 }, (_, i) => cropToPngDataUrl(gear, i * 16, 0, 16, 16)),
+      accessoryIcons: Array.from({ length: 4 }, (_, i) => cropToPngDataUrl(gear, i * 16, 16, 16, 16)),
     };
     return {
-      sprites: { hero, swords, guns, enemies, itemsVfx, menuIcons, tiles, backgrounds },
+      sprites: {
+        hero,
+        swords,
+        guns,
+        enemies,
+        enemiesKeroco,
+        bosses,
+        itemsVfx,
+        menuIcons,
+        gear,
+        portals,
+        tiles,
+        backgrounds,
+      },
       icons,
     };
   });

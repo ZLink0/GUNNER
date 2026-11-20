@@ -4,6 +4,23 @@ export type HubTab = 'world' | 'quest' | 'shop' | 'blacksmith' | 'equipment';
 export type ScreenPalette = 'vivid' | 'pocket' | 'lcd';
 export type TouchMode = 'auto' | 'always' | 'hidden';
 
+export type BiomeId = 'waterfall' | 'desert' | 'snow' | 'volcano' | 'galaxy' | 'graveyard';
+
+export interface BiomeDef {
+  index: number;
+  id: BiomeId;
+  name: string;
+}
+
+export const BIOMES: BiomeDef[] = [
+  { index: 0, id: 'waterfall', name: 'Air Terjun' },
+  { index: 1, id: 'desert', name: 'Gurun' },
+  { index: 2, id: 'snow', name: 'Salju' },
+  { index: 3, id: 'volcano', name: 'Vulkano' },
+  { index: 4, id: 'galaxy', name: 'Galaxy' },
+  { index: 5, id: 'graveyard', name: 'Kuburan' },
+];
+
 export type SwordId =
   | 'iron_sword'
   | 'crystal_sword'
@@ -35,13 +52,12 @@ export interface SwordDef {
   spriteIndex: number;
   name: string;
   baseDamage: number;
-  speedMult: number; // >1 faster, <1 slower
-  critBonus: number; // 0..1
-  rangeBonus: number; // pixels
+  speedMult: number;
+  critBonus: number;
+  rangeBonus: number;
   element: ElementType;
   effectLabel: string;
   sourceHint: string;
-  shopPrice?: number;
   craftCost?: { gold: number; materials: number; crystals: number };
 }
 
@@ -52,7 +68,7 @@ export interface GunDef {
   baseDamage: number;
   pellets: number; // 1 for rifle/blaster, 3 for shotgun
   spreadAngleDeg: number;
-  rangePx: number | null; // null = Infinite range
+  rangePx: number | null; // null = Infinite range, 48px = 3 blocks
   projectileSpeed: number;
   cooldownSec: number;
   pierce: boolean;
@@ -64,14 +80,16 @@ export interface GunDef {
 
 export interface ArmorDef {
   id: string;
+  spriteIndex: number;
   name: string;
   defBonus: number;
   hpBonus: number;
-  price: number;
+  craftCost?: { gold: number; materials: number; crystals: number };
 }
 
 export interface AccessoryDef {
   id: string;
+  spriteIndex: number;
   name: string;
   atkBonus: number;
   critBonus: number;
@@ -109,7 +127,7 @@ export interface SaveState {
   exp: number;
   gold: number;
   rareCrystals: number;
-  weaponMaterials: number;
+  weaponMaterials: number; // Displayed in UI as "Iron"
   hpPotions: number; // max 10
   manaPotions: number;
   ammo: number;
@@ -123,6 +141,7 @@ export interface SaveState {
   gunUpgrades: Partial<Record<GunId, number>>; // +0..+10
   equippedGun: GunId;
   ownedArmors: string[];
+  armorUpgrades: Partial<Record<string, number>>; // +0..+10
   equippedArmor: string;
   ownedAccessories: string[];
   equippedAccessory: string | null;
@@ -184,8 +203,7 @@ export const SWORDS: SwordDef[] = [
     rangeBonus: 2,
     element: 'ice',
     effectLabel: 'Frost Slow on Hit',
-    sourceHint: 'Shop / Blacksmith',
-    shopPrice: 220,
+    sourceHint: 'Blacksmith',
     craftCost: { gold: 140, materials: 3, crystals: 20 },
   },
   {
@@ -198,8 +216,7 @@ export const SWORDS: SwordDef[] = [
     rangeBonus: 2,
     element: 'fire',
     effectLabel: 'Burn DoT Damage',
-    sourceHint: 'Shop / Blacksmith',
-    shopPrice: 360,
+    sourceHint: 'Blacksmith',
     craftCost: { gold: 240, materials: 4, crystals: 35 },
   },
   {
@@ -212,7 +229,7 @@ export const SWORDS: SwordDef[] = [
     rangeBonus: 2,
     element: 'thunder',
     effectLabel: 'Shock Stun Strike',
-    sourceHint: 'Blacksmith / Hidden Chest (Stage 12)',
+    sourceHint: 'Blacksmith / Chest (Stg 12)',
     craftCost: { gold: 380, materials: 6, crystals: 55 },
   },
   {
@@ -225,7 +242,7 @@ export const SWORDS: SwordDef[] = [
     rangeBonus: 3,
     element: 'dark',
     effectLabel: 'Lifesteal +4 HP on Kill',
-    sourceHint: 'Blacksmith / Boss Drop (Stage 25)',
+    sourceHint: 'Blacksmith / Boss (Stg 25)',
     craftCost: { gold: 520, materials: 8, crystals: 80 },
   },
   {
@@ -238,8 +255,8 @@ export const SWORDS: SwordDef[] = [
     rangeBonus: 4,
     element: 'holy',
     effectLabel: '+35% vs Boss & Dark',
-    sourceHint: 'Quest Reward / Shop',
-    shopPrice: 820,
+    sourceHint: 'Blacksmith / Quest Reward',
+    craftCost: { gold: 760, materials: 10, crystals: 100 },
   },
   {
     id: 'dragon_slayer',
@@ -251,7 +268,7 @@ export const SWORDS: SwordDef[] = [
     rangeBonus: 7,
     element: 'fire',
     effectLabel: '+50% Boss Buster',
-    sourceHint: 'Blacksmith / Boss Drop (Stage 40)',
+    sourceHint: 'Blacksmith / Boss (Stg 40)',
     craftCost: { gold: 900, materials: 12, crystals: 120 },
   },
   {
@@ -264,8 +281,8 @@ export const SWORDS: SwordDef[] = [
     rangeBonus: 9,
     element: 'none',
     effectLabel: 'Heavy Knockback Arc',
-    sourceHint: 'Shop / Hidden Chest (Stage 32)',
-    shopPrice: 1250,
+    sourceHint: 'Blacksmith / Chest (Stg 32)',
+    craftCost: { gold: 1180, materials: 14, crystals: 140 },
   },
   {
     id: 'shadow_katana',
@@ -277,7 +294,7 @@ export const SWORDS: SwordDef[] = [
     rangeBonus: 4,
     element: 'dark',
     effectLabel: 'Hyper Slash & 30% Crit',
-    sourceHint: 'Blacksmith / Boss Drop (Stage 60)',
+    sourceHint: 'Blacksmith / Boss (Stg 60)',
     craftCost: { gold: 1450, materials: 15, crystals: 160 },
   },
   {
@@ -290,11 +307,12 @@ export const SWORDS: SwordDef[] = [
     rangeBonus: 10,
     element: 'holy',
     effectLabel: 'Fires Radiant Sword Wave',
-    sourceHint: 'Blacksmith Legend / Stage 80 Boss',
+    sourceHint: 'Blacksmith Legend / Stg 80 Boss',
     craftCost: { gold: 2400, materials: 24, crystals: 200 },
   },
 ];
 
+// Weakest Gun = 48px (3 Blocks * 16px). Top Guns = Infinite Range (null).
 export const GUNS: GunDef[] = [
   {
     id: 'buster_mk1',
@@ -303,12 +321,12 @@ export const GUNS: GunDef[] = [
     baseDamage: 10,
     pellets: 1,
     spreadAngleDeg: 0,
-    rangePx: 115,
-    projectileSpeed: 225,
+    rangePx: 48, // 3 Blocks (weak starter gun)
+    projectileSpeed: 215,
     cooldownSec: 0.18,
     pierce: false,
     element: 'none',
-    effectLabel: 'Short-Mid Starter Gun (115px)',
+    effectLabel: 'Starter Gun · 3 Blok (48px)',
   },
   {
     id: 'pulse_pistol',
@@ -317,12 +335,12 @@ export const GUNS: GunDef[] = [
     baseDamage: 14,
     pellets: 1,
     spreadAngleDeg: 0,
-    rangePx: 145,
-    projectileSpeed: 245,
+    rangePx: 64, // 4 Blocks
+    projectileSpeed: 235,
     cooldownSec: 0.15,
     pierce: false,
     element: 'none',
-    effectLabel: 'Fast Sidearm (145px)',
+    effectLabel: 'Fast Sidearm · 4 Blok (64px)',
     craftCost: { gold: 150, materials: 3, crystals: 20 },
   },
   {
@@ -332,13 +350,13 @@ export const GUNS: GunDef[] = [
     baseDamage: 11,
     pellets: 3,
     spreadAngleDeg: 14,
-    rangePx: 54,
-    projectileSpeed: 250,
+    rangePx: 48, // 3 Blocks very short
+    projectileSpeed: 245,
     cooldownSec: 0.28,
     pierce: false,
     element: 'none',
     isShotgun: true,
-    effectLabel: 'Shotgun 3-Pellet · Very Short (54px)',
+    effectLabel: 'Shotgun 3-Pellet · 3 Blok (48px)',
     craftCost: { gold: 260, materials: 5, crystals: 35 },
   },
   {
@@ -348,12 +366,12 @@ export const GUNS: GunDef[] = [
     baseDamage: 19,
     pellets: 1,
     spreadAngleDeg: 0,
-    rangePx: 185,
+    rangePx: 112, // 7 Blocks
     projectileSpeed: 260,
     cooldownSec: 0.17,
     pierce: false,
     element: 'ice',
-    effectLabel: 'Frost Shot · Mid Range (185px)',
+    effectLabel: 'Frost Shot · 7 Blok (112px)',
     craftCost: { gold: 380, materials: 6, crystals: 55 },
   },
   {
@@ -363,13 +381,13 @@ export const GUNS: GunDef[] = [
     baseDamage: 16,
     pellets: 3,
     spreadAngleDeg: 16,
-    rangePx: 62,
+    rangePx: 56, // Very short 3.5 Blocks
     projectileSpeed: 265,
     cooldownSec: 0.27,
     pierce: false,
     element: 'fire',
     isShotgun: true,
-    effectLabel: 'Fire 3-Pellet · Very Short (62px)',
+    effectLabel: 'Fire 3-Pellet · 3.5 Blok (56px)',
     craftCost: { gold: 520, materials: 8, crystals: 75 },
   },
   {
@@ -379,12 +397,12 @@ export const GUNS: GunDef[] = [
     baseDamage: 25,
     pellets: 1,
     spreadAngleDeg: 0,
-    rangePx: 235,
+    rangePx: 160, // 10 Blocks
     projectileSpeed: 280,
     cooldownSec: 0.17,
     pierce: false,
     element: 'thunder',
-    effectLabel: 'Shock Stun · Long Range (235px)',
+    effectLabel: 'Shock Stun · 10 Blok (160px)',
     craftCost: { gold: 700, materials: 10, crystals: 95 },
   },
   {
@@ -394,12 +412,12 @@ export const GUNS: GunDef[] = [
     baseDamage: 32,
     pellets: 1,
     spreadAngleDeg: 0,
-    rangePx: 290,
+    rangePx: 224, // 14 Blocks
     projectileSpeed: 270,
     cooldownSec: 0.22,
     pierce: false,
     element: 'fire',
-    effectLabel: 'Burn Blast · Long Range (290px)',
+    effectLabel: 'Burn Blast · 14 Blok (224px)',
     craftCost: { gold: 920, materials: 12, crystals: 120 },
   },
   {
@@ -409,12 +427,12 @@ export const GUNS: GunDef[] = [
     baseDamage: 38,
     pellets: 1,
     spreadAngleDeg: 0,
-    rangePx: 420,
+    rangePx: 320, // 20 Blocks
     projectileSpeed: 330,
     cooldownSec: 0.21,
     pierce: true,
     element: 'dark',
-    effectLabel: 'Piercing Bolt · Ultra Range (420px)',
+    effectLabel: 'Piercing Bolt · 20 Blok (320px)',
     craftCost: { gold: 1200, materials: 15, crystals: 150 },
   },
   {
@@ -450,18 +468,46 @@ export const GUNS: GunDef[] = [
 ];
 
 export const ARMORS: ArmorDef[] = [
-  { id: 'adventurer_vest', name: 'Adventurer Vest', defBonus: 2, hpBonus: 0, price: 0 },
-  { id: 'iron_mail', name: 'Iron Mail', defBonus: 6, hpBonus: 25, price: 180 },
-  { id: 'crystal_plate', name: 'Crystal Plate', defBonus: 12, hpBonus: 60, price: 460 },
-  { id: 'dragon_scale', name: 'Dragon Scale', defBonus: 20, hpBonus: 120, price: 950 },
-  { id: 'aegis_armor', name: 'Aegis Armor', defBonus: 32, hpBonus: 220, price: 1850 },
+  { id: 'adventurer_vest', spriteIndex: 0, name: 'Adventurer Vest', defBonus: 2, hpBonus: 0 },
+  {
+    id: 'iron_mail',
+    spriteIndex: 1,
+    name: 'Iron Mail',
+    defBonus: 6,
+    hpBonus: 25,
+    craftCost: { gold: 180, materials: 4, crystals: 20 },
+  },
+  {
+    id: 'crystal_plate',
+    spriteIndex: 2,
+    name: 'Crystal Plate',
+    defBonus: 12,
+    hpBonus: 60,
+    craftCost: { gold: 460, materials: 8, crystals: 50 },
+  },
+  {
+    id: 'dragon_scale',
+    spriteIndex: 3,
+    name: 'Dragon Scale',
+    defBonus: 20,
+    hpBonus: 120,
+    craftCost: { gold: 950, materials: 14, crystals: 110 },
+  },
+  {
+    id: 'aegis_armor',
+    spriteIndex: 4,
+    name: 'Aegis Armor',
+    defBonus: 32,
+    hpBonus: 220,
+    craftCost: { gold: 1850, materials: 22, crystals: 180 },
+  },
 ];
 
 export const ACCESSORIES: AccessoryDef[] = [
-  { id: 'ammo_belt', name: 'Ammo Belt', atkBonus: 2, critBonus: 0, ammoBonus: 10, speedBonus: 0, price: 160, effectText: '+10 Max Ammo, +2 ATK' },
-  { id: 'crit_ring', name: 'Crit Ring', atkBonus: 3, critBonus: 0.12, ammoBonus: 0, speedBonus: 0, price: 280, effectText: '+12% Crit Rate, +3 ATK' },
-  { id: 'power_gauntlet', name: 'Power Gauntlet', atkBonus: 10, critBonus: 0.04, ammoBonus: 0, speedBonus: 0, price: 520, effectText: '+10 ATK, +4% Crit' },
-  { id: 'dash_boots', name: 'Wind Boots', atkBonus: 4, critBonus: 0.05, ammoBonus: 0, speedBonus: 0.15, price: 680, effectText: '+15% Move Speed, +4 ATK' },
+  { id: 'ammo_belt', spriteIndex: 0, name: 'Ammo Belt', atkBonus: 2, critBonus: 0, ammoBonus: 10, speedBonus: 0, price: 160, effectText: '+10 Max Ammo, +2 ATK' },
+  { id: 'crit_ring', spriteIndex: 1, name: 'Crit Ring', atkBonus: 3, critBonus: 0.12, ammoBonus: 0, speedBonus: 0, price: 280, effectText: '+12% Crit Rate, +3 ATK' },
+  { id: 'power_gauntlet', spriteIndex: 2, name: 'Power Gauntlet', atkBonus: 10, critBonus: 0.04, ammoBonus: 0, speedBonus: 0, price: 520, effectText: '+10 ATK, +4% Crit' },
+  { id: 'dash_boots', spriteIndex: 3, name: 'Wind Boots', atkBonus: 4, critBonus: 0.05, ammoBonus: 0, speedBonus: 0.15, price: 680, effectText: '+15% Move Speed, +4 ATK' },
 ];
 
 export const QUESTS: QuestDef[] = [
@@ -469,7 +515,7 @@ export const QUESTS: QuestDef[] = [
     id: 'q_main_1',
     title: 'First Expedition',
     type: 'main',
-    description: 'Clear Stage 1 in Emerald Ruins.',
+    description: 'Clear Stage 1 in Air Terjun.',
     targetType: 'clear_stage',
     targetCount: 1,
     rewardGold: 120,
@@ -493,7 +539,7 @@ export const QUESTS: QuestDef[] = [
     id: 'q_main_boss1',
     title: 'Ruin Guardian',
     type: 'main',
-    description: 'Clear Stage 5 Boss in Emerald Ruins.',
+    description: 'Clear Stage 5 Boss.',
     targetType: 'clear_stage',
     targetCount: 5,
     rewardGold: 320,
@@ -518,7 +564,7 @@ export const QUESTS: QuestDef[] = [
     id: 'q_side_forge',
     title: 'Master Smithing',
     type: 'side',
-    description: 'Upgrade any weapon at the Blacksmith.',
+    description: 'Upgrade any weapon or armor at the Blacksmith.',
     targetType: 'upgrade_sword',
     targetCount: 1,
     rewardGold: 200,
@@ -555,7 +601,7 @@ export const QUESTS: QuestDef[] = [
     id: 'q_main_spire',
     title: 'Abyssal Legend',
     type: 'main',
-    description: 'Clear Stage 100 Final Boss.',
+    description: 'Defeat Stage 100 Final Boss.',
     targetType: 'clear_stage',
     targetCount: 100,
     rewardGold: 5000,
@@ -582,6 +628,7 @@ export type HeroAnimName =
   | 'hurt'
   | 'death'
   | 'climb'
+  | 'hangClimb'
   | 'dash'
   | 'potion';
 

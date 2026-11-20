@@ -6,6 +6,8 @@ import {
   ArrowUp,
   Crosshair,
   Pause,
+  RotateCcw,
+  RotateCw,
   Settings,
   Sword,
   Volume2,
@@ -26,6 +28,7 @@ interface HandheldShellProps {
   onMenuNav: (action: MenuNavAction) => void;
   onToggleMute: () => void;
   onPause: () => void;
+  onStart: () => void;
   onOptions: () => void;
 }
 
@@ -38,6 +41,7 @@ export const HandheldShell: React.FC<HandheldShellProps> = ({
   onMenuNav,
   onToggleMute,
   onPause,
+  onStart,
   onOptions,
 }) => {
   const showPad = touchMode !== 'hidden';
@@ -106,25 +110,25 @@ export const HandheldShell: React.FC<HandheldShellProps> = ({
     };
   };
 
-  const potionProps = {
+  const holdBtnProps = (btn: VirtualButton) => ({
     onPointerDown: (e: React.PointerEvent) => {
       e.preventDefault();
       if (isStagePlaying) {
         safeCapture(e.currentTarget as HTMLElement, e.pointerId);
-        onVirtualButton('potion', true);
+        onVirtualButton(btn, true);
       }
     },
     onPointerUp: (e: React.PointerEvent) => {
       e.preventDefault();
-      if (isStagePlaying) onVirtualButton('potion', false);
+      if (isStagePlaying) onVirtualButton(btn, false);
     },
     onPointerCancel: () => {
-      if (isStagePlaying) onVirtualButton('potion', false);
+      if (isStagePlaying) onVirtualButton(btn, false);
     },
     onLostPointerCapture: () => {
-      if (isStagePlaying) onVirtualButton('potion', false);
+      if (isStagePlaying) onVirtualButton(btn, false);
     },
-  };
+  });
 
   const transparentWhiteBtn =
     'bg-white/10 hover:bg-white/20 active:bg-white/35 border-2 border-white/60 text-white/95 backdrop-blur-[1px] transition-colors cursor-pointer select-none flex flex-col items-center justify-center';
@@ -195,9 +199,35 @@ export const HandheldShell: React.FC<HandheldShellProps> = ({
     <div className="h-screen w-screen overflow-hidden bg-[#12141f] flex flex-col items-center justify-center p-2 sm:p-4">
       {/* Retro GBC Handheld Casing */}
       <div className="w-full max-w-[980px] h-full max-h-[840px] flex flex-col md:flex-row items-center justify-evenly md:justify-center gap-2 md:gap-5 bg-[#23273a] border-4 border-[#3a415e] rounded-2xl p-2.5 sm:p-4 shadow-[0_12px_0_#0b0d14]">
-        {/* Left Handheld Wing (Desktop D-Pad & Info) */}
+        {/* Left Handheld Wing (Desktop Turn L/R, D-Pad & Audio/Options) */}
         {showPad && (
-          <div className="hidden md:flex flex-col items-center justify-center gap-4 w-44 shrink-0">
+          <div className="hidden md:flex flex-col items-center justify-center gap-3 w-44 shrink-0">
+            {/* Turn Left / Right Face Buttons (Q/E) */}
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                data-btn="TURN_L"
+                aria-label="Turn Left"
+                tabIndex={-1}
+                {...holdBtnProps('turnLeft')}
+                className={`w-14 py-1 rounded ${transparentWhiteBtn}`}
+              >
+                <RotateCcw className="w-3.5 h-3.5" strokeWidth={2.25} />
+                <span className="font-pixel-title text-[7px] mt-0.5">TURN L</span>
+              </button>
+              <button
+                type="button"
+                data-btn="TURN_R"
+                aria-label="Turn Right"
+                tabIndex={-1}
+                {...holdBtnProps('turnRight')}
+                className={`w-14 py-1 rounded ${transparentWhiteBtn}`}
+              >
+                <RotateCw className="w-3.5 h-3.5" strokeWidth={2.25} />
+                <span className="font-pixel-title text-[7px] mt-0.5">TURN R</span>
+              </button>
+            </div>
+
             <div className="text-[9px] font-pixel-title text-white/75 tracking-wider">
               {isStagePlaying ? 'D-PAD' : 'PILIH MENU'}
             </div>
@@ -317,7 +347,7 @@ export const HandheldShell: React.FC<HandheldShellProps> = ({
           </div>
         </div>
 
-        {/* Right Handheld Wing (Desktop Transparent-White ABXY Cluster) */}
+        {/* Right Handheld Wing (Desktop Transparent-White ABXY + START + Potion) */}
         {showPad && (
           <div className="hidden md:flex flex-col items-center justify-center gap-3 w-44 shrink-0">
             <div className="text-[9px] font-pixel-title text-white/75 tracking-wider">ABXY PAD</div>
@@ -325,21 +355,34 @@ export const HandheldShell: React.FC<HandheldShellProps> = ({
             <div className="text-[8px] text-white/70 text-center leading-tight">
               {isStagePlaying ? 'A:Atk B:Jmp X:Sht Y:Dsh' : 'A: OK  ·  B: Back'}
             </div>
-            <button
-              type="button"
-              aria-label="Use HP Potion"
-              tabIndex={-1}
-              {...potionProps}
-              className="w-28 py-1.5 bg-white/10 hover:bg-white/20 active:bg-white/35 border-2 border-white/55 rounded text-[8px] font-pixel-title text-white cursor-pointer"
-            >
-              POTION [H]
-            </button>
+            <div className="flex flex-col gap-1.5 w-32">
+              <button
+                type="button"
+                data-btn="START"
+                aria-label={isStagePlaying ? 'Start Pause Menu' : 'Start OK'}
+                onClick={onStart}
+                tabIndex={-1}
+                onMouseUp={(e) => e.currentTarget.blur()}
+                className="w-full py-1.5 bg-white/10 hover:bg-white/20 active:bg-white/35 border-2 border-white/60 rounded-full text-[8px] font-pixel-title text-white cursor-pointer tracking-wider"
+              >
+                START {isStagePlaying ? '(PAUSE)' : ''}
+              </button>
+              <button
+                type="button"
+                aria-label="Use HP Potion"
+                tabIndex={-1}
+                {...holdBtnProps('potion')}
+                className="w-full py-1.5 bg-white/10 hover:bg-white/20 active:bg-white/35 border-2 border-white/55 rounded text-[8px] font-pixel-title text-white cursor-pointer"
+              >
+                POTION [H]
+              </button>
+            </div>
           </div>
         )}
 
         {/* Android / Mobile Portrait Touch Controls Bar */}
         {showPad && (
-          <div className="flex md:hidden w-full items-center justify-between px-1 pt-1 gap-2 flex-1 max-h-[210px]">
+          <div className="flex md:hidden w-full items-center justify-between px-1 pt-1 gap-1.5 flex-1 max-h-[220px]">
             {/* Mobile D-Pad */}
             <div className="grid grid-cols-3 grid-rows-3 gap-1 w-32 h-32 shrink-0 touch-none">
               <div />
@@ -385,20 +428,47 @@ export const HandheldShell: React.FC<HandheldShellProps> = ({
               <div />
             </div>
 
-            {/* Center Potion & Hint */}
-            <div className="flex flex-col items-center gap-1.5">
+            {/* Center START, Turn L/R & Potion */}
+            <div className="flex flex-col items-center gap-1.5 shrink-0">
+              <div className="flex items-center gap-1">
+                <button
+                  type="button"
+                  aria-label="Turn Left"
+                  tabIndex={-1}
+                  {...holdBtnProps('turnLeft')}
+                  className="w-9 h-9 bg-white/10 active:bg-white/35 border-2 border-white/60 rounded flex items-center justify-center text-white"
+                >
+                  <RotateCcw className="w-3.5 h-3.5" strokeWidth={2.25} />
+                </button>
+                <button
+                  type="button"
+                  aria-label="Turn Right"
+                  tabIndex={-1}
+                  {...holdBtnProps('turnRight')}
+                  className="w-9 h-9 bg-white/10 active:bg-white/35 border-2 border-white/60 rounded flex items-center justify-center text-white"
+                >
+                  <RotateCw className="w-3.5 h-3.5" strokeWidth={2.25} />
+                </button>
+              </div>
+              <button
+                type="button"
+                data-btn="START"
+                aria-label={isStagePlaying ? 'Start Pause' : 'Start OK'}
+                onClick={onStart}
+                tabIndex={-1}
+                className="min-h-[34px] px-2.5 bg-white/10 active:bg-white/35 border-2 border-white/60 rounded-full text-[7px] font-pixel-title text-white tracking-wider"
+              >
+                START
+              </button>
               <button
                 type="button"
                 aria-label="Drink Potion"
                 tabIndex={-1}
-                {...potionProps}
-                className="min-h-[44px] px-2.5 bg-white/10 active:bg-white/35 border-2 border-white/55 rounded text-[8px] font-pixel-title text-white"
+                {...holdBtnProps('potion')}
+                className="min-h-[34px] px-2.5 bg-white/10 active:bg-white/35 border-2 border-white/55 rounded text-[7px] font-pixel-title text-white"
               >
                 POT
               </button>
-              <span className="text-[7px] text-white/65 text-center leading-tight">
-                {isStagePlaying ? 'A:Atk B:Jmp' : 'A:OK B:Bck'}
-              </span>
             </div>
 
             {/* Mobile ABXY Diamond (>= 44px touch targets) */}
@@ -411,3 +481,4 @@ export const HandheldShell: React.FC<HandheldShellProps> = ({
     </div>
   );
 };
+
