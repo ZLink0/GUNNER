@@ -1,0 +1,6 @@
+{
+  "name": "Sword & Gun RPG",
+  "description": "Mega Man Game Boy Color inspired 2D side-scrolling Sword & Gun Action RPG with 100 stages, 10 swords, finite ammo drops, and RPG level 1-100 progression.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

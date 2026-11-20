@@ -1,0 +1,57 @@
+@import "tailwindcss";
+
+@layer base {
+  html,
+  body,
+  #root {
+    height: 100%;
+    width: 100%;
+    margin: 0;
+    padding: 0;
+    overflow: hidden;
+    background-color: #161822;
+    color: #f4f6fb;
+    font-family: 'Silkscreen', ui-monospace, SFMono-Regular, Menlo, monospace;
+    -webkit-tap-highlight-color: transparent;
+    user-select: none;
+  }
+}
+
+.font-pixel-title {
+  font-family: 'Press Start 2P', 'Silkscreen', monospace;
+}
+
+.font-pixel-ui {
+  font-family: 'Silkscreen', monospace;
+}
+
+.pixelated {
+  image-rendering: pixelated;
+  image-rendering: crisp-edges;
+}
+
+/* Custom thin retro scrollbar for RPG Hub inner lists */
+.gbc-scroll::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+.gbc-scroll::-webkit-scrollbar-track {
+  background: #0d121d;
+}
+
+.gbc-scroll::-webkit-scrollbar-thumb {
+  background: #384a6b;
+  border-radius: 2px;
+}
+
+/* Crisp retro selector highlight for D-Pad / Keyboard menu navigation */
+[data-menu-root='true'] button:focus,
+[data-menu-root='true'] input:focus,
+[role='dialog'] button:focus,
+[role='dialog'] input:focus {
+  outline: 2px solid #ffffff;
+  outline-offset: 1px;
+  box-shadow: 0 0 0 3px rgba(250, 204, 21, 0.55);
+}
+
